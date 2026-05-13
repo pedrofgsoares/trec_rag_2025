@@ -2,14 +2,14 @@
 
 These steps are **operator-only** (require sudo, host-Windows access, or shell restart) and must be completed before the pipeline can run end-to-end. Tasks reference the IDs in `openspec/changes/add-baseline-pipeline/tasks.md`.
 
-Probed state at handoff (2026-05-13):
+Status (updated 2026-05-13):
 
 | Task | Status |
 |---|---|
-| 1.1 WSL2 RAM `.wslconfig` | **TODO** — `free -h` reports 7.6 GiB; need ≥11 GiB |
-| 1.2 Verify post-restart `free -h` | **TODO** — gated on 1.1 |
-| 1.3 OpenJDK 21 | **TODO** — `java` not on PATH |
-| 1.4 Python 3.11 via `pyenv` + `uv venv` | **TODO** — `pyenv` not installed; `uv 0.11.8` is available; system Python is 3.12.3 |
+| 1.1 WSL2 RAM `.wslconfig` | **DONE** |
+| 1.2 Verify post-restart `free -h` | **DONE** |
+| 1.3 OpenJDK 21 | **DONE** |
+| 1.4 Python 3.11 + `uv venv` | **DONE** |
 | 1.5 `nvidia-smi` reports Quadro T1000 4 GB | **DONE** — driver 573.44, CUDA 12.8 visible |
 
 ---
@@ -56,30 +56,32 @@ echo 'export JAVA_HOME=$(dirname $(dirname $(readlink -f $(which java))))' >> ~/
 source ~/.bashrc
 ```
 
-## 1.4 Python 3.11 via pyenv + uv venv
+## 1.4 Python 3.11 + uv venv
 
-`pyenv` install:
-
-```bash
-curl https://pyenv.run | bash
-# Follow the post-install instructions to add pyenv to your shell rc, then:
-exec "$SHELL"
-pyenv install 3.11.9
-pyenv local 3.11.9   # run from /home/up746872/projects/trec_rag_2025
-```
-
-Project venv via `uv`:
+`uv` manages the Python toolchain directly — no `pyenv` required. It downloads
+a standalone CPython 3.11 build into `~/.local/share/uv/python/` and the venv
+picks it up automatically.
 
 ```bash
 cd /home/up746872/projects/trec_rag_2025
-uv venv --python 3.11.9
+uv python install 3.11
+uv venv --python 3.11
 source .venv/bin/activate
-uv pip install -e .   # installs the project + pinned deps from pyproject.toml
+python --version          # expect: Python 3.11.x
+uv pip install -e .       # installs the project + pinned deps from pyproject.toml
 ```
 
-> **Note (deviation from spec, optional):** `uv` can manage the Python toolchain directly:
-> `uv python install 3.11 && uv venv --python 3.11`
-> functionally equivalent and avoids the pyenv dependency. Pick one.
+> **Alternative (pyenv, optional):** the original spec referenced `pyenv`.
+> If you prefer it for shell-wide version management, the equivalent is:
+> ```bash
+> curl https://pyenv.run | bash
+> # add the printed lines to ~/.bashrc, then:
+> exec "$SHELL"
+> pyenv install 3.11.9 && pyenv local 3.11.9
+> uv venv --python 3.11.9 && source .venv/bin/activate
+> uv pip install -e .
+> ```
+> Functionally equivalent. Pick one.
 
 ## 2.3 Install scispaCy `en_core_sci_sm`
 

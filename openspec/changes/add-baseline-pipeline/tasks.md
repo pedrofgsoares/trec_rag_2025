@@ -1,16 +1,17 @@
 ## 1. Environment & Hardware Provisioning
 
-- [ ] 1.1 Operator: bump WSL2 RAM to ≥12 GB via host `C:\Users\<user>\.wslconfig` (`[wsl2] memory=12GB swap=8GB`) and run `wsl --shutdown`
-- [ ] 1.2 Verify post-restart: `free -h` reports ≥11 GiB total inside WSL
-- [ ] 1.3 Install OpenJDK 21 (`sudo apt install openjdk-21-jdk-headless`) and confirm `java -version`
-- [ ] 1.4 Install Python 3.11 via `pyenv` and create project venv with `uv venv`
+- [x] 1.1 Operator: bump WSL2 RAM to ≥12 GB via host `C:\Users\<user>\.wslconfig` (`[wsl2] memory=12GB swap=8GB`) and run `wsl --shutdown`
+- [x] 1.2 Verify post-restart: `free -h` reports ≥11 GiB total inside WSL
+- [x] 1.3 Install OpenJDK 21 (`sudo apt install openjdk-21-jdk-headless`) and confirm `java -version`
+- [x] 1.4 Install Python 3.11 via `pyenv` and create project venv with `uv venv` <!-- done via uv python install 3.11 + uv venv --python 3.11 (pyenv-free per SETUP.md §1.4) -->
+
 - [x] 1.5 Verify `nvidia-smi` runs inside WSL and reports the Quadro T1000 with 4 GB
 
 ## 2. Project Scaffolding
 
 - [x] 2.1 Create directory tree: `src/trec_biogen/{ingest,retrieval,rerank,nli,pipeline,io,eval}/`, `configs/{retrieval,rerank,nli,run}/`, `data/{raw,interim,indexes,topics,qrels}/`, `runs/`, `notebooks/`, `scripts/`, `tests/`
 - [x] 2.2 Add `pyproject.toml` pinning: `pyserini`, `transformers`, `sentence-transformers`, `torch` (CUDA 12.1 wheel), `scispacy`, `negspacy`, `hydra-core`, `mlflow`, `duckdb`, `polars`, `pytest`
-- [ ] 2.3 Install `en_core_sci_sm` from scispaCy releases <!-- operator: after `uv venv` per SETUP.md §2.3 -->
+- [x] 2.3 Install `en_core_sci_sm` from scispaCy releases <!-- verified: spacy.load('en_core_sci_sm') -> 0.5.4 -->
 - [x] 2.4 Add `.gitignore` excluding `data/`, `runs/`, `.hydra/`, `*.parquet`
 - [x] 2.5 Initialise `git` repo and make first commit of scaffolding
 
