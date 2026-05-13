@@ -1,0 +1,35 @@
+# Data and runs (large, regenerable)
+data/
+runs/
+.hydra/
+*.parquet
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.ruff_cache/
+.mypy_cache/
+
+# Venv / build
+.venv/
+build/
+dist/
+
+# MLflow local store
+mlruns/
+
+# IDE
+.idea/
+.vscode/
+
+# Vendor — re-fetch via scripts
+external/starter-kit-2025/
+
+# OS
+.DS_Store
+Thumbs.db
