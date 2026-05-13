@@ -1,0 +1,23 @@
+# Default Phase-1 baseline run config (Hydra entry point).
+defaults:
+  - _self_
+  - retrieval: bm25_default
+  - rerank: medcpt
+  - nli: deberta_scifive
+
+# Paths (relative to repo root).
+paths:
+  index_dir: data/indexes/pubmed_bm25
+  topics: data/topics/biogen2025_taskA_input.jsonl
+  qrels_2025: data/qrels/biogen2025_taskA_qrels.jsonl
+  qrels_2024: data/qrels/biogen2024_taskA_qrels.jsonl
+  runs_dir: runs
+
+run:
+  label: phase1_baseline
+  seed: 0
+
+selection:
+  tau_sup: 0.5
+  tau_con: 0.5
+  cap: 3

@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<PubmedArticleSet>
+  <PubmedArticle>
+    <MedlineCitation Status="MEDLINE" Owner="NLM">
+      <PMID Version="1">10000001</PMID>
+      <Article PubModel="Print">
+        <Journal>
+          <Title>Journal of Test Medicine</Title>
+          <JournalIssue CitedMedium="Print">
+            <PubDate><Year>2021</Year><Month>Mar</Month></PubDate>
+          </JournalIssue>
+        </Journal>
+        <ArticleTitle>Aspirin reduces cardiovascular events in adults.</ArticleTitle>
+        <Abstract>
+          <AbstractText Label="BACKGROUND">Aspirin is widely studied.</AbstractText>
+          <AbstractText Label="RESULTS">Aspirin reduced MI by 25%.</AbstractText>
+        </Abstract>
+      </Article>
+      <MeshHeadingList>
+        <MeshHeading><DescriptorName UI="D001241">Aspirin</DescriptorName></MeshHeading>
+        <MeshHeading><DescriptorName UI="D002318">Cardiovascular Diseases</DescriptorName></MeshHeading>
+      </MeshHeadingList>
+    </MedlineCitation>
+  </PubmedArticle>
+  <PubmedArticle>
+    <MedlineCitation Status="MEDLINE" Owner="NLM">
+      <PMID Version="1">10000002</PMID>
+      <Article PubModel="Print">
+        <Journal>
+          <Title>Lancet</Title>
+          <JournalIssue CitedMedium="Print">
+            <PubDate><MedlineDate>2003 Spring</MedlineDate></PubDate>
+          </JournalIssue>
+        </Journal>
+        <ArticleTitle>A study with no abstract available.</ArticleTitle>
+      </Article>
+    </MedlineCitation>
+  </PubmedArticle>
+  <PubmedArticle>
+    <MedlineCitation Status="MEDLINE" Owner="NLM">
+      <PMID Version="1">10000003</PMID>
+      <Article PubModel="Print">
+        <Journal>
+          <Title>BMJ</Title>
+          <JournalIssue CitedMedium="Print">
+            <PubDate><Year>2019</Year></PubDate>
+          </JournalIssue>
+        </Journal>
+        <ArticleTitle>No evidence of benefit from drug X in trial.</ArticleTitle>
+        <Abstract>
+          <AbstractText>We did not find any effect of drug X on mortality.</AbstractText>
+        </Abstract>
+      </Article>
+    </MedlineCitation>
+  </PubmedArticle>
+</PubmedArticleSet>

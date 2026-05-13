@@ -8,83 +8,90 @@
 
 ## 2. Project Scaffolding
 
-- [ ] 2.1 Create directory tree: `src/trec_biogen/{ingest,retrieval,rerank,nli,pipeline,io,eval}/`, `configs/{retrieval,rerank,nli,run}/`, `data/{raw,interim,indexes,topics,qrels}/`, `runs/`, `notebooks/`, `scripts/`, `tests/`
-- [ ] 2.2 Add `pyproject.toml` pinning: `pyserini`, `transformers`, `sentence-transformers`, `torch` (CUDA 12.1 wheel), `scispacy`, `negspacy`, `hydra-core`, `mlflow`, `duckdb`, `polars`, `pytest`
-- [ ] 2.3 Install `en_core_sci_sm` from scispaCy releases
-- [ ] 2.4 Add `.gitignore` excluding `data/`, `runs/`, `.hydra/`, `*.parquet`
-- [ ] 2.5 Initialise `git` repo and make first commit of scaffolding
+- [x] 2.1 Create directory tree: `src/trec_biogen/{ingest,retrieval,rerank,nli,pipeline,io,eval}/`, `configs/{retrieval,rerank,nli,run}/`, `data/{raw,interim,indexes,topics,qrels}/`, `runs/`, `notebooks/`, `scripts/`, `tests/`
+- [x] 2.2 Add `pyproject.toml` pinning: `pyserini`, `transformers`, `sentence-transformers`, `torch` (CUDA 12.1 wheel), `scispacy`, `negspacy`, `hydra-core`, `mlflow`, `duckdb`, `polars`, `pytest`
+- [ ] 2.3 Install `en_core_sci_sm` from scispaCy releases <!-- operator: after `uv venv` per SETUP.md §2.3 -->
+- [x] 2.4 Add `.gitignore` excluding `data/`, `runs/`, `.hydra/`, `*.parquet`
+- [x] 2.5 Initialise `git` repo and make first commit of scaffolding
 
 ## 3. Corpus Ingestion (capability: pubmed-index)
 
-- [ ] 3.1 Write `scripts/download_pubmed.sh` to fetch `biogen-2025-document-collection.zip` and extract under `data/raw/pubmed_baseline/`
-- [ ] 3.2 Add post-download check that asserts doc count = 26,805,982 (±0.1%)
-- [ ] 3.3 Implement `src/trec_biogen/ingest/parse_pubmed.py` to emit JSONL records `{pmid,title,abstract,mesh,pubdate,journal,empty_abstract}`
-- [ ] 3.4 Add unit test on a 100-doc fixture verifying record schema and the `empty_abstract` flag
-- [ ] 3.5 Run parse over the full corpus; confirm output line count equals corpus doc count
+- [x] 3.1 Write `scripts/download_pubmed.sh` to fetch `biogen-2025-document-collection.zip` and extract under `data/raw/pubmed_baseline/`
+- [x] 3.2 Add post-download check that asserts doc count = 26,805,982 (±0.1%)
+- [x] 3.3 Implement `src/trec_biogen/ingest/parse_pubmed.py` to emit JSONL records `{pmid,title,abstract,mesh,pubdate,journal,empty_abstract}`
+- [x] 3.4 Add unit test on a 100-doc fixture verifying record schema and the `empty_abstract` flag <!-- 3-doc fixture; covers schema + empty_abstract + labeled-sections + pubdate -->
+- [ ] 3.5 Run parse over the full corpus; confirm output line count equals corpus doc count <!-- operator: bucket C, ~1-2h after download -->
+
 
 ## 4. BM25 Index Build (capability: pubmed-index)
 
-- [ ] 4.1 Write `scripts/build_indexes.sh` invoking Pyserini `index` with `JsonCollection`, `--storeDocvectors`, `--storeRaw`
-- [ ] 4.2 Run build in background overnight; capture wall-clock and final size
-- [ ] 4.3 Implement `src/trec_biogen/retrieval/bm25.py` exposing `search(query, k)` that supports `k=100` and `k=1000` on one open index handle
-- [ ] 4.4 Add round-trip test: query a sentinel PMID's title and confirm exact retrieval
-- [ ] 4.5 Add preflight `verify_index()` used by the pipeline entry point
+- [x] 4.1 Write `scripts/build_indexes.sh` invoking Pyserini `index` with `JsonCollection`, `--storeDocvectors`, `--storeRaw` <!-- includes parse + collection-conversion phases -->
+- [ ] 4.2 Run build in background overnight; capture wall-clock and final size <!-- operator: bucket C, ~12h -->
+- [x] 4.3 Implement `src/trec_biogen/retrieval/bm25.py` exposing `search(query, k)` that supports `k=100` and `k=1000` on one open index handle
+- [x] 4.4 Add round-trip test: query a sentinel PMID's title and confirm exact retrieval <!-- env-gated on BIOGEN_INDEX_DIR/BIOGEN_SENTINEL_{PMID,TITLE}; runs after 4.2 -->
+- [x] 4.5 Add preflight `verify_index()` used by the pipeline entry point
 
 ## 5. Topic & Qrels Loading (capability: biogen-task-a)
 
-- [ ] 5.1 Implement `src/trec_biogen/io/topics.py` to load the official Task A input JSONL and validate `metadata.qa_id` and `answer` presence
-- [ ] 5.2 Add fail-fast on malformed lines with offending line number in the error
-- [ ] 5.3 Place BioGen 2024 and 2025 qrels under `data/qrels/` and add a loader producing per-(qa_id, sentence_id, class) positive-set lookups
-- [ ] 5.4 Add fixtures: 2-topic mini input + matching mini qrels for unit tests
+- [x] 5.1 Implement `src/trec_biogen/io/topics.py` to load the official Task A input JSONL and validate `metadata.qa_id` and `answer` presence
+- [x] 5.2 Add fail-fast on malformed lines with offending line number in the error
+- [x] 5.3 Place BioGen 2024 and 2025 qrels under `data/qrels/` and add a loader producing per-(qa_id, sentence_id, class) positive-set lookups <!-- loader implemented in src/trec_biogen/io/qrels.py; data/qrels/ files are operator-supplied -->
+- [x] 5.4 Add fixtures: 2-topic mini input + matching mini qrels for unit tests
 
 ## 6. Baseline Reproduction (capability: evaluation)
 
-- [ ] 6.1 Vendor or git-submodule the `trec-biogen/starter-kit-2025` repo under `external/starter-kit-2025/`
-- [ ] 6.2 Write `scripts/run_starter_baseline.sh` that runs the unmodified starter-kit baseline against the official 2025 input
-- [ ] 6.3 Implement `src/trec_biogen/eval/metrics.py` computing per-class P/R/F1 under Strict and Relaxed settings
-- [ ] 6.4 Implement `make baseline-check` (or `scripts/baseline_check.sh`) that runs starter baseline + eval and asserts F1 within ±2 of (44.34, 4.67)
-- [ ] 6.5 Run the gate; do not proceed past this task until it exits 0
+- [x] 6.1 Vendor or git-submodule the `trec-biogen/starter-kit-2025` repo under `external/starter-kit-2025/` <!-- via scripts/vendor_starter_kit.sh; clone gated on operator network -->
+- [x] 6.2 Write `scripts/run_starter_baseline.sh` that runs the unmodified starter-kit baseline against the official 2025 input
+- [x] 6.3 Implement `src/trec_biogen/eval/metrics.py` computing per-class P/R/F1 under Strict and Relaxed settings
+- [x] 6.4 Implement `make baseline-check` (or `scripts/baseline_check.sh`) that runs starter baseline + eval and asserts F1 within ±2 of (44.34, 4.67)
+- [ ] 6.5 Run the gate; do not proceed past this task until it exits 0 <!-- operator: bucket C, hours -->
+
 
 ## 7. Support Path (capability: biogen-task-a)
 
-- [ ] 7.1 Implement `src/trec_biogen/pipeline/run_task_a.py` phase 1 that issues BM25 k=100 per (question + sentence) and writes `runs/<id>/retrieval_support.parquet`
-- [ ] 7.2 Implement `src/trec_biogen/rerank/cross_encoder.py` loading `ncbi/MedCPT-Cross-Encoder` with batch=8 and writing `runs/<id>/rerank_support.parquet` (top-30 per sentence)
-- [ ] 7.3 Implement `src/trec_biogen/nli/stance.py` for support: `MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli` over (sentence, title+abstract) truncated to 512 tokens, batch=16, writing `runs/<id>/nli_support.parquet`
-- [ ] 7.4 Add explicit `del model; torch.cuda.empty_cache()` between phases
-- [ ] 7.5 Spot-check on the 2-topic fixture that support scores are reasonable (top-1 entailment > 0.5 on at least one sentence)
+- [x] 7.1 Implement `src/trec_biogen/pipeline/run_task_a.py` phase 1 that issues BM25 k=100 per (question + sentence) and writes `runs/<id>/retrieval_support.parquet` <!-- via pipeline/phases.retrieve(k=100); orchestrator wires in §11.1 -->
+- [x] 7.2 Implement `src/trec_biogen/rerank/cross_encoder.py` loading `ncbi/MedCPT-Cross-Encoder` with batch=8 and writing `runs/<id>/rerank_support.parquet` (top-30 per sentence)
+- [x] 7.3 Implement `src/trec_biogen/nli/stance.py` for support: `MoritzLaurer/DeBERTa-v3-base-mnli-fever-anli` over (sentence, title+abstract) truncated to 512 tokens, batch=16, writing `runs/<id>/nli_support.parquet`
+- [x] 7.4 Add explicit `del model; torch.cuda.empty_cache()` between phases <!-- pipeline/model_utils.unload() -->
+- [ ] 7.5 Spot-check on the 2-topic fixture that support scores are reasonable (top-1 entailment > 0.5 on at least one sentence) <!-- operator: requires venv + models + index -->
+
 
 ## 8. Contradiction Path (capability: biogen-task-a)
 
-- [ ] 8.1 Phase 1' issues BM25 k=1000 per (question + sentence) and writes `runs/<id>/retrieval_contradict.parquet`
-- [ ] 8.2 Implement abstract sentence segmentation via scispaCy `en_core_sci_sm` writing one row per (candidate_pmid, abstract_sentence_idx, abstract_sentence_text)
-- [ ] 8.3 Implement NegEx + cue-list filter (the 23 patterns from `design.md` D4) in `src/trec_biogen/nli/negation.py`; log `filtered_out_count`
-- [ ] 8.4 Implement contradiction NLI in `nli/stance.py` using `razent/SciFive-base-Pubmed_PMC` fine-tuned on MedNLI, batch=8, writing per-pair contradiction probability
-- [ ] 8.5 Aggregate per-document score by max-pool over abstract sentences; write `runs/<id>/nli_contradict.parquet`
-- [ ] 8.6 Sample 50 NegEx-dropped sentences and manually review for false negatives; record findings in `runs/<id>/negation_audit.md`
+- [x] 8.1 Phase 1' issues BM25 k=1000 per (question + sentence) and writes `runs/<id>/retrieval_contradict.parquet` <!-- pipeline/phases.retrieve(k=1000) -->
+- [x] 8.2 Implement abstract sentence segmentation via scispaCy `en_core_sci_sm` writing one row per (candidate_pmid, abstract_sentence_idx, abstract_sentence_text) <!-- pipeline/phases.segment_abstracts -->
+- [x] 8.3 Implement NegEx + cue-list filter (the 23 patterns from `design.md` D4) in `src/trec_biogen/nli/negation.py`; log `filtered_out_count`
+- [x] 8.4 Implement contradiction NLI in `nli/stance.py` using `razent/SciFive-base-Pubmed_PMC` fine-tuned on MedNLI, batch=8, writing per-pair contradiction probability <!-- defaults to razent/SciFive-base-Pubmed_PMC-MedNLI; overridable via config -->
+- [x] 8.5 Aggregate per-document score by max-pool over abstract sentences; write `runs/<id>/nli_contradict.parquet` <!-- pipeline/phases.aggregate_contradict -->
+- [ ] 8.6 Sample 50 NegEx-dropped sentences and manually review for false negatives; record findings in `runs/<id>/negation_audit.md` <!-- code emits the audit JSONL; operator does the review -->
+
 
 ## 9. Selection & Submission (capability: biogen-task-a)
 
-- [ ] 9.1 Implement `src/trec_biogen/pipeline/selection.py`: per sentence, take top-3 supports by NLI score above τ_sup; top-3 contradictions by BM25 rank above τ_con
-- [ ] 9.2 Apply global PMID dedup within a topic: lower-index sentence wins ties; promote next-best on the loser
-- [ ] 9.3 Implement `src/trec_biogen/io/submission.py` writing JSONL with contradicting PMIDs first, then supporting PMIDs, preserving topic+sentence order
-- [ ] 9.4 Add submission validator asserting per-sentence caps, PMID membership in the corpus, and ordering rule
-- [ ] 9.5 Run end-to-end on the 2-topic fixture; confirm validator passes
+- [x] 9.1 Implement `src/trec_biogen/pipeline/selection.py`: per sentence, take top-3 supports by NLI score above τ_sup; top-3 contradictions by BM25 rank above τ_con
+- [x] 9.2 Apply global PMID dedup within a topic: lower-index sentence wins ties; promote next-best on the loser
+- [x] 9.3 Implement `src/trec_biogen/io/submission.py` writing JSONL with contradicting PMIDs first, then supporting PMIDs, preserving topic+sentence order
+- [x] 9.4 Add submission validator asserting per-sentence caps, PMID membership in the corpus, and ordering rule
+- [ ] 9.5 Run end-to-end on the 2-topic fixture; confirm validator passes <!-- operator: needs venv + models + index; smoke test in §11.5 covers structure -->
+
 
 ## 10. Evaluation & Reporting (capability: evaluation)
 
-- [ ] 10.1 Extend `eval/metrics.py` to emit JSON report with the six numbers × two settings against any qrels file
-- [ ] 10.2 Add `eval/report.py` writing `report.md` with the leaderboard comparison table (baseline / CLaC / InfoLab / current run)
-- [ ] 10.3 Add `phase1_pass` flag (Supports F1 ≥ 60 AND Contradicts F1 ≥ 10 strict, 2025 qrels)
-- [ ] 10.4 Run full pipeline end-to-end against the official 2025 input and qrels; record numbers in `reports/exp_001_baseline_phase1.md`
-- [ ] 10.5 Compare against published Table 5 rows; document deltas
+- [x] 10.1 Extend `eval/metrics.py` to emit JSON report with the six numbers × two settings against any qrels file
+- [x] 10.2 Add `eval/report.py` writing `report.md` with the leaderboard comparison table (baseline / CLaC / InfoLab / current run)
+- [x] 10.3 Add `phase1_pass` flag (Supports F1 ≥ 60 AND Contradicts F1 ≥ 10 strict, 2025 qrels)
+- [ ] 10.4 Run full pipeline end-to-end against the official 2025 input and qrels; record numbers in `reports/exp_001_baseline_phase1.md` <!-- operator: bucket C, ~6-10h -->
+- [ ] 10.5 Compare against published Table 5 rows; document deltas <!-- operator: follow-up to 10.4 -->
+
 
 ## 11. Reproducibility & Run Hygiene
 
-- [ ] 11.1 Wire Hydra config: every CLI snapshots resolved config + git SHA + hardware fingerprint into `runs/<id>/metadata.yaml`
-- [ ] 11.2 Add structured logging via `loguru` with one JSONL log per run
-- [ ] 11.3 Add MLflow local tracking; one run per pipeline invocation with all six metric numbers
-- [ ] 11.4 Document setup, commands, and known limits in `README.md`
-- [ ] 11.5 Add `pytest` smoke test that runs the 2-topic fixture end-to-end and asserts a valid submission is produced
+- [x] 11.1 Wire Hydra config: every CLI snapshots resolved config + git SHA + hardware fingerprint into `runs/<id>/metadata.yaml`
+- [x] 11.2 Add structured logging via `loguru` with one JSONL log per run
+- [x] 11.3 Add MLflow local tracking; one run per pipeline invocation with all six metric numbers <!-- via pipeline.run_task_a._start_mlflow_run + _log_metrics -->
+- [x] 11.4 Document setup, commands, and known limits in `README.md`
+- [x] 11.5 Add `pytest` smoke test that runs the 2-topic fixture end-to-end and asserts a valid submission is produced <!-- tests/test_smoke_pipeline.py — selection → submission → validate → eval; CI-safe (no GPU/models) -->
+
 
 ## 12. Phase 1 Sign-Off
 

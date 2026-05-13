@@ -1,0 +1,6 @@
+{"qa_id": "Q001", "sentence_id": 0, "pmid": "10000001", "class": "support", "relevance": 1}
+{"qa_id": "Q001", "sentence_id": 0, "pmid": "10000004", "class": "partial_support", "relevance": 1}
+{"qa_id": "Q001", "sentence_id": 1, "pmid": "10000003", "class": "contradict", "relevance": 1}
+{"qa_id": "Q002", "sentence_id": 0, "pmid": "10000005", "class": "support", "relevance": 1}
+{"qa_id": "Q002", "sentence_id": 1, "pmid": "10000003", "class": "contradict", "relevance": 1}
+{"qa_id": "Q002", "sentence_id": 1, "pmid": "10000006", "class": "partial_contradict", "relevance": 1}

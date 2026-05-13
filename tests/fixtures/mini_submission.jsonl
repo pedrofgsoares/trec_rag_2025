@@ -1,0 +1,2 @@
+{"qa_id": "Q001", "sentences": [{"sentence_id": 0, "contradict_pmids": [], "support_pmids": ["10000001", "10000004", "99999999"]}, {"sentence_id": 1, "contradict_pmids": ["10000003"], "support_pmids": []}]}
+{"qa_id": "Q002", "sentences": [{"sentence_id": 0, "contradict_pmids": [], "support_pmids": ["10000005"]}, {"sentence_id": 1, "contradict_pmids": ["10000003", "10000006"], "support_pmids": []}]}

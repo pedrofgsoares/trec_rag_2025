@@ -1,0 +1,4 @@
+k1: 0.9
+b: 0.4
+support_k: 100      # design D1
+contradict_k: 1000  # design D1
