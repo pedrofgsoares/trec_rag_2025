@@ -31,7 +31,7 @@ from omegaconf import DictConfig, OmegaConf
 from trec_biogen.eval.metrics import evaluate
 from trec_biogen.eval.report import phase1_pass, write_report
 from trec_biogen.io.qrels import load_qrels
-from trec_biogen.io.submission import validate, write_submission
+from trec_biogen.io.submission import validate_official, write_official_submission
 from trec_biogen.io.topics import load_topics
 from trec_biogen.nli.negation import filter_negated
 from trec_biogen.nli.stance import score_contradict_pairs, score_support
@@ -180,41 +180,53 @@ def main(cfg: DictConfig) -> None:
         selection = select(
             nli_support=nli_sup,
             nli_contradict=nli_con,
+            topics=topics,
             config=SelectionConfig(
                 tau_sup=cfg.selection.tau_sup,
                 tau_con=cfg.selection.tau_con,
                 cap=cfg.selection.cap,
             ),
         )
-        submission_path = write_submission(selection, run_dir / "submission.jsonl")
-        validate(submission_path)
+        submission_path = write_official_submission(
+            selection, topics, run_dir / "task_a_output.json"
+        )
+        validate_official(submission_path)
         logger.info(f"submission validated: {submission_path}")
 
         logger.info("phase 7: evaluation")
         qrels_2025_path = repo / cfg.paths.qrels_2025
         qrels_2024_path = repo / cfg.paths.qrels_2024
-        report_2025 = evaluate(submission_path, load_qrels(qrels_2025_path))
-        (run_dir / "metrics_2025.json").write_text(json.dumps(report_2025, indent=2))
-        _log_metrics(report_2025, "2025")
+
+        report_2025 = None
+        if qrels_2025_path.exists():
+            report_2025 = evaluate(submission_path, load_qrels(qrels_2025_path))
+            (run_dir / "metrics_2025.json").write_text(json.dumps(report_2025, indent=2))
+            _log_metrics(report_2025, "2025")
+        else:
+            logger.info(f"qrels_2025 missing at {qrels_2025_path} — skipping 2025 eval")
 
         report_2024 = None
         if qrels_2024_path.exists():
             report_2024 = evaluate(submission_path, load_qrels(qrels_2024_path))
             (run_dir / "metrics_2024.json").write_text(json.dumps(report_2024, indent=2))
             _log_metrics(report_2024, "2024")
+        else:
+            logger.info(f"qrels_2024 missing at {qrels_2024_path} — skipping 2024 eval")
 
-        write_report(
-            report_2025_json=run_dir / "metrics_2025.json",
-            report_2024_json=run_dir / "metrics_2024.json" if report_2024 else None,
-            out_md=run_dir / "report.md",
-            run_label=cfg.run.label,
-        )
-
-        verdict = phase1_pass(report_2025)
-        logger.info(
-            f"phase1: passed={verdict.passed} "
-            f"sup_f1={verdict.support_f1:.2f} con_f1={verdict.contradict_f1:.2f}"
-        )
+        if report_2025 is not None:
+            write_report(
+                report_2025_json=run_dir / "metrics_2025.json",
+                report_2024_json=run_dir / "metrics_2024.json" if report_2024 else None,
+                out_md=run_dir / "report.md",
+                run_label=cfg.run.label,
+            )
+            verdict = phase1_pass(report_2025)
+            logger.info(
+                f"phase1: passed={verdict.passed} "
+                f"sup_f1={verdict.support_f1:.2f} con_f1={verdict.contradict_f1:.2f}"
+            )
+        else:
+            logger.info("no qrels available — submission produced, evaluation deferred")
     finally:
         bm.close()
         if mlflow_run is not None:

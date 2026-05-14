@@ -1,7 +1,7 @@
 ## 1. Environment & Hardware Provisioning
 
-- [x] 1.1 Operator: bump WSL2 RAM to ≥12 GB via host `C:\Users\<user>\.wslconfig` (`[wsl2] memory=12GB swap=8GB`) and run `wsl --shutdown`
-- [x] 1.2 Verify post-restart: `free -h` reports ≥11 GiB total inside WSL
+- [ ] 1.1 Operator: bump WSL2 RAM to ≥12 GB via host `C:\Users\<user>\.wslconfig` (`[wsl2] memory=12GB swap=8GB`) and run `wsl --shutdown` <!-- NOT yet effective: dmesg shows hv_balloon max=8078 MB (2026-05-14). Verify .wslconfig path/content/encoding per SETUP.md §1.1 -->
+- [ ] 1.2 Verify post-restart: `free -h` reports ≥11 GiB total inside WSL <!-- gated on 1.1 actually taking effect -->
 - [x] 1.3 Install OpenJDK 21 (`sudo apt install openjdk-21-jdk-headless`) and confirm `java -version`
 - [x] 1.4 Install Python 3.11 via `pyenv` and create project venv with `uv venv` <!-- done via uv python install 3.11 + uv venv --python 3.11 (pyenv-free per SETUP.md §1.4) -->
 
@@ -21,13 +21,14 @@
 - [x] 3.2 Add post-download check that asserts doc count = 26,805,982 (±0.1%)
 - [x] 3.3 Implement `src/trec_biogen/ingest/parse_pubmed.py` to emit JSONL records `{pmid,title,abstract,mesh,pubdate,journal,empty_abstract}`
 - [x] 3.4 Add unit test on a 100-doc fixture verifying record schema and the `empty_abstract` flag <!-- 3-doc fixture; covers schema + empty_abstract + labeled-sections + pubdate -->
-- [ ] 3.5 Run parse over the full corpus; confirm output line count equals corpus doc count <!-- operator: bucket C, ~1-2h after download -->
+- [x] 3.5 Run parse over the full corpus; confirm output line count equals corpus doc count <!-- N/A: official corpus is already in Pyserini JsonCollection shape; equivalent line-count check is performed in scripts/download_pubmed.sh (asserts ±0.1% of 26,805,982) -->
 
 
 ## 4. BM25 Index Build (capability: pubmed-index)
 
 - [x] 4.1 Write `scripts/build_indexes.sh` invoking Pyserini `index` with `JsonCollection`, `--storeDocvectors`, `--storeRaw` <!-- includes parse + collection-conversion phases -->
-- [ ] 4.2 Run build in background overnight; capture wall-clock and final size <!-- operator: bucket C, ~12h -->
+- [x] 4.2 Run build in background overnight; capture wall-clock and final size <!-- 2026-05-14: 26,805,982 docs, 0 errors, 1h37m wall-clock, 37 GB final; _Xmx4g + 2 threads on the 8 GB WSL VM -->
+
 - [x] 4.3 Implement `src/trec_biogen/retrieval/bm25.py` exposing `search(query, k)` that supports `k=100` and `k=1000` on one open index handle
 - [x] 4.4 Add round-trip test: query a sentinel PMID's title and confirm exact retrieval <!-- env-gated on BIOGEN_INDEX_DIR/BIOGEN_SENTINEL_{PMID,TITLE}; runs after 4.2 -->
 - [x] 4.5 Add preflight `verify_index()` used by the pipeline entry point

@@ -75,17 +75,36 @@ def _prf(predicted: Iterable[str], positives: set[str]) -> PRF | None:
 
 
 def _iter_submission_cells(submission_path: Path) -> Iterable[tuple[str, int, Class, list[str]]]:
+    """Yield ``(qa_id, sentence_id, class, predicted_pmids)`` from either submission shape.
+
+    Accepts both:
+      * official ``task_a_output.json`` — a single JSON list with ``meta_data.qa_id``
+        and ``answer[]`` carrying ``supported_citations`` / ``contradicted_citations``
+        as integer PMIDs;
+      * legacy JSONL — ``{qa_id, sentences:[{sentence_id, support_pmids, contradict_pmids}]}``.
+    """
+    raw = Path(submission_path).read_bytes().lstrip()
+    if raw[:1] == b"[":
+        items = orjson.loads(raw)
+        for item in items:
+            meta = item.get("meta_data") or item.get("metadata") or {}
+            qa_id = str(meta.get("qa_id") or "")
+            for sid, ans in enumerate(item.get("answer", [])):
+                yield qa_id, sid, "support", [str(p) for p in ans.get("supported_citations") or []]
+                yield qa_id, sid, "contradict", [str(p) for p in ans.get("contradicted_citations") or []]
+        return
+
     with submission_path.open("rb") as fh:
-        for raw in fh:
-            raw = raw.strip()
-            if not raw:
+        for line in fh:
+            line = line.strip()
+            if not line:
                 continue
-            rec = orjson.loads(raw)
+            rec = orjson.loads(line)
             qa_id = str(rec["qa_id"])
             for sent in rec.get("sentences", []):
                 sid = int(sent["sentence_id"])
-                yield qa_id, sid, "support", list(sent.get("support_pmids", []))
-                yield qa_id, sid, "contradict", list(sent.get("contradict_pmids", []))
+                yield qa_id, sid, "support", [str(p) for p in sent.get("support_pmids", [])]
+                yield qa_id, sid, "contradict", [str(p) for p in sent.get("contradict_pmids", [])]
 
 
 def evaluate(submission_path: Path, qrels: QrelsIndex) -> dict[str, dict[str, dict[str, float]]]:

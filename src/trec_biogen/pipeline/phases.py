@@ -15,7 +15,6 @@ from typing import Literal
 import polars as pl
 
 from trec_biogen.io.topics import Topic
-from trec_biogen.pipeline.sentences import split_sentences
 from trec_biogen.retrieval.bm25 import BM25Index, Hit
 
 
@@ -31,10 +30,13 @@ def retrieve(
     k: int,
     out_path: Path,
 ) -> Path:
-    """Run BM25 at depth ``k`` for every (topic, answer-sentence) pair."""
+    """Run BM25 at depth ``k`` for every (topic, answer-sentence) pair.
+
+    Uses the pre-segmented ``topic.sentences`` (one row per official ``answer[i]``).
+    """
     rows: list[dict] = []
     for topic in topics:
-        for sid, sent in enumerate(split_sentences(topic.answer)):
+        for sid, sent in enumerate(topic.sentences):
             query = _query_for(topic, sent)
             hits: list[Hit] = bm25.search(query, k=k)
             for h in hits:

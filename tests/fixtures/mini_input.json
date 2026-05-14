@@ -1,0 +1,34 @@
+[
+  {
+    "meta_data": {
+      "qa_id": "Q001",
+      "question": "Does aspirin reduce cardiovascular events?"
+    },
+    "answer": [
+      {
+        "text": "Aspirin reduces myocardial infarction by 25%.",
+        "existing_supported_citations": null
+      },
+      {
+        "text": "There is no evidence that aspirin reduces stroke risk in low-risk adults.",
+        "existing_supported_citations": null
+      }
+    ]
+  },
+  {
+    "meta_data": {
+      "qa_id": "Q002",
+      "question": "Is drug X effective for migraine?"
+    },
+    "answer": [
+      {
+        "text": "Drug X reduces migraine frequency in trials.",
+        "existing_supported_citations": [99000123]
+      },
+      {
+        "text": "We did not find any effect on migraine severity.",
+        "existing_supported_citations": null
+      }
+    ]
+  }
+]

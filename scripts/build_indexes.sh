@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Build the Pyserini Lucene BM25 index over the BioGen 2025 PubMed corpus.
 #
-# Phases:
-#   1. parse XML.gz -> parsed/pubmed.jsonl  (rich schema; task 3.3/3.5)
-#   2. convert      -> collection/pubmed.jsonl  ({id, contents}; task 4.1)
-#   3. pyserini index --storeDocvectors --storeRaw  (task 4.1, 4.2)
+# The official corpus is distributed in Pyserini JsonCollection shape
+# ({"id","contents"} per line) under a subfolder of RAW_DIR (typically
+# named "pubmed_baseline_collection_jsonl") — so we can point Pyserini
+# directly at the unzipped data, no parse/convert step required.
 #
 # Long-running: ~12 h on the target laptop. Run overnight, capture wall-clock.
 #
@@ -13,36 +13,50 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-RAW_DIR="${REPO_ROOT}/data/raw/pubmed_baseline"
-PARSED="${REPO_ROOT}/data/interim/pubmed.jsonl"
-COLLECTION_DIR="${REPO_ROOT}/data/interim/collection"
-INDEX_DIR="${REPO_ROOT}/data/indexes/pubmed_bm25"
+# Same override as download_pubmed.sh — raw corpus may live on /mnt/c/...
+RAW_DIR="${BIOGEN_RAW_DIR:-${REPO_ROOT}/data/raw/pubmed_baseline}"
+# INDEX_DIR can be overridden when the WSL VHD lacks space, e.g.
+#   BIOGEN_INDEX_DIR=/mnt/c/Users/<you>/Downloads/TREC/indexes/pubmed_bm25
+# Trade-off: /mnt/c is ~3-5× slower than native ext4 for the heavy random
+# I/O of Lucene indexing, but is necessary if WSL is disk-bound.
+INDEX_DIR="${BIOGEN_INDEX_DIR:-${REPO_ROOT}/data/indexes/pubmed_bm25}"
 LOG_DIR="${REPO_ROOT}/runs/index_build"
-THREADS="${PYSERINI_THREADS:-10}"  # leave 2 cores headroom on 12-thread CPU
 
-mkdir -p "$(dirname "${PARSED}")" "${COLLECTION_DIR}" "${INDEX_DIR}" "${LOG_DIR}"
+# Memory tuning for the Lucene indexer on the 8 GB WSL2 VM.
+#
+# Total budget (measured 2026-05-14, free -h): 7.6 GiB VM, 5.9 GiB available.
+# Reserve ~2.2 GiB for kernel + page cache + Python + JVM off-heap, leaves ~4 GiB
+# safe headroom for the JVM heap. -Xmx4g + 2 threads keeps the total resident
+# set comfortably under the VM ceiling so the kernel never OOM-kills the JVM.
+#
+# If you bump .wslconfig to 12 GB later (task 1.1) and verify with `free -h`,
+# override at invocation:
+#   _JAVA_OPTIONS="-Xmx8g -Xms2g" PYSERINI_THREADS=4 bash scripts/build_indexes.sh
+export _JAVA_OPTIONS="${_JAVA_OPTIONS:--Xmx4g -Xms1g}"
+THREADS="${PYSERINI_THREADS:-2}"
 
-if [[ ! -f "${PARSED}" ]]; then
-    echo "[1/3] parsing PubMed XML -> ${PARSED}"
-    time python -m trec_biogen.ingest.parse_pubmed --input "${RAW_DIR}" --output "${PARSED}"
-else
-    echo "[1/3] parsed JSONL already present: ${PARSED}"
+mkdir -p "${INDEX_DIR}" "${LOG_DIR}"
+
+# Locate the directory that actually contains the JSONL files. Pyserini's
+# JsonCollection needs a directory of .jsonl files, not a single file.
+JSONL_FILE=$(find "${RAW_DIR}" -type f -name '*.jsonl' -print -quit)
+if [[ -z "${JSONL_FILE}" ]]; then
+    echo "ERROR: no .jsonl files found under ${RAW_DIR}" >&2
+    echo "       run scripts/download_pubmed.sh first" >&2
+    exit 2
 fi
-
-COLL_FILE="${COLLECTION_DIR}/pubmed.jsonl"
-if [[ ! -f "${COLL_FILE}" ]]; then
-    echo "[2/3] converting -> ${COLL_FILE}"
-    time python -m trec_biogen.retrieval.build_collection \
-        --input "${PARSED}" --output "${COLL_FILE}"
-else
-    echo "[2/3] collection JSONL already present: ${COLL_FILE}"
-fi
+COLLECTION_DIR="$(dirname "${JSONL_FILE}")"
+JSONL_COUNT=$(find "${COLLECTION_DIR}" -maxdepth 1 -type f -name '*.jsonl' | wc -l)
+echo "[input] collection dir: ${COLLECTION_DIR}  (${JSONL_COUNT} jsonl files)"
 
 START_TS=$(date +%s)
 LOG_FILE="${LOG_DIR}/index_$(date +%Y%m%d_%H%M%S).log"
-echo "[3/3] building Lucene index -> ${INDEX_DIR}  (log: ${LOG_FILE})"
+echo "[index] building Lucene index -> ${INDEX_DIR}  (log: ${LOG_FILE})"
+echo "[index] threads=${THREADS}  _JAVA_OPTIONS='${_JAVA_OPTIONS}'"
 
-# Pyserini wraps Anserini Lucene indexer. Threads pinned for headroom.
+# Pyserini wraps Anserini Lucene indexer. Threads pinned for headroom on the
+# 12-thread i7-10750H. --storeRaw is required so the rerank/NLI phases can
+# fetch document contents via BM25Index.doc_text().
 python -m pyserini.index.lucene \
     --collection JsonCollection \
     --input "${COLLECTION_DIR}" \

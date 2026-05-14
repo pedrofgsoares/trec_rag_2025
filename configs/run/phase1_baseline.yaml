@@ -8,7 +8,7 @@ defaults:
 # Paths (relative to repo root).
 paths:
   index_dir: data/indexes/pubmed_bm25
-  topics: data/topics/biogen2025_taskA_input.jsonl
+  topics: data/topics/biogen2025_taskA_input.json
   qrels_2025: data/qrels/biogen2025_taskA_qrels.jsonl
   qrels_2024: data/qrels/biogen2024_taskA_qrels.jsonl
   runs_dir: runs
