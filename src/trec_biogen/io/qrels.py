@@ -47,6 +47,22 @@ class QrelsIndex:
         store = self.strict if setting == "strict" else self.relaxed
         return store.get((qa_id, sentence_id, cls), set())
 
+    def question_positives(
+        self, qa_id: str, cls: Class, *, setting: str = "strict"
+    ) -> set[str]:
+        """Union of positives across every sentence_id for ``(qa_id, cls)``.
+
+        Used by the question-level evaluation mode (e.g. against BioGEN 2024
+        qrels, where sentence_ids in the source collection don't align with
+        the fixed sentences of the 2025 input).
+        """
+        store = self.strict if setting == "strict" else self.relaxed
+        out: set[str] = set()
+        for (q, _sid, c), pmids in store.items():
+            if q == qa_id and c == cls:
+                out |= pmids
+        return out
+
 
 def load_qrels(path: Path) -> QrelsIndex:
     strict: dict[tuple[str, int, str], set[str]] = defaultdict(set)

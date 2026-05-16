@@ -17,7 +17,7 @@ import polars as pl
 from trec_biogen.pipeline.model_utils import device
 from trec_biogen.retrieval.bm25 import BM25Index
 
-MODEL_NAME = "ncbi/MedCPT-Cross-Encoder"
+DEFAULT_MODEL = "ncbi/MedCPT-Cross-Encoder"
 DEFAULT_BATCH = 8
 DEFAULT_TOP_K = 30
 MAX_LEN = 512
@@ -28,6 +28,7 @@ def rerank_support(
     bm25: BM25Index,
     *,
     out_path: Path,
+    model_name: str = DEFAULT_MODEL,
     batch_size: int = DEFAULT_BATCH,
     top_k: int = DEFAULT_TOP_K,
 ) -> Path:
@@ -35,8 +36,8 @@ def rerank_support(
     from transformers import AutoModelForSequenceClassification, AutoTokenizer
 
     dev = device()
-    tok = AutoTokenizer.from_pretrained(MODEL_NAME)
-    model = AutoModelForSequenceClassification.from_pretrained(MODEL_NAME).to(dev).eval()
+    tok = AutoTokenizer.from_pretrained(model_name)
+    model = AutoModelForSequenceClassification.from_pretrained(model_name).to(dev).eval()
 
     df = pl.read_parquet(retrieval_parquet)
     # Materialise the doc text once per unique pmid.

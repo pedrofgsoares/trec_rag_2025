@@ -1,9 +1,10 @@
+# @package _global_
 # Default Phase-1 baseline run config (Hydra entry point).
 defaults:
   - _self_
-  - retrieval: bm25_default
-  - rerank: medcpt
-  - nli: deberta_scifive
+  - /retrieval: bm25_default
+  - /rerank: medcpt
+  - /nli: deberta_scifive
 
 # Paths (relative to repo root).
 paths:

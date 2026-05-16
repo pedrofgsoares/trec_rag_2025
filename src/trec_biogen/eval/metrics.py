@@ -107,8 +107,27 @@ def _iter_submission_cells(submission_path: Path) -> Iterable[tuple[str, int, Cl
                 yield qa_id, sid, "contradict", [str(p) for p in sent.get("contradict_pmids", [])]
 
 
-def evaluate(submission_path: Path, qrels: QrelsIndex) -> dict[str, dict[str, dict[str, float]]]:
-    """Return {setting: {class: {P,R,F1}}} macro-averaged across judged cells."""
+def evaluate(
+    submission_path: Path,
+    qrels: QrelsIndex,
+    *,
+    level: Literal["sentence", "question"] = "sentence",
+) -> dict[str, dict[str, dict[str, float]]]:
+    """Return {setting: {class: {P,R,F1}}} macro-averaged across judged cells.
+
+    Level:
+      * ``sentence`` (default) — score each (qa_id, sentence_id, class) cell
+        against the qrels positives for that exact triple. Used with qrels
+        whose sentence_ids match the submission's input (e.g. 2025).
+      * ``question`` — union predictions across sentences per (qa_id, class)
+        and score against ``qrels.question_positives``. Used with qrels
+        whose sentence_ids do not align with the submission (e.g. BioGEN
+        2024 where the source qrels references each team's generated
+        answer-sentences). Aggregates per qa_id rather than per cell.
+    """
+    if level == "question":
+        return _evaluate_question_level(submission_path, qrels)
+
     per_cell: dict[Setting, dict[Class, list[PRF]]] = {
         s: {c: [] for c in _CLASSES} for s in _SETTINGS
     }
@@ -118,7 +137,35 @@ def evaluate(submission_path: Path, qrels: QrelsIndex) -> dict[str, dict[str, di
             res = _prf(predicted, positives)
             if res is not None:
                 per_cell[setting][cls].append(res)
+    return _macro_average(per_cell)
 
+
+def _evaluate_question_level(
+    submission_path: Path, qrels: QrelsIndex
+) -> dict[str, dict[str, dict[str, float]]]:
+    # Union predictions per (qa_id, class) across sentences.
+    by_qa: dict[tuple[str, Class], set[str]] = {}
+    for qa_id, _sid, cls, predicted in _iter_submission_cells(submission_path):
+        key = (qa_id, cls)
+        by_qa.setdefault(key, set()).update(predicted)
+
+    per_cell: dict[Setting, dict[Class, list[PRF]]] = {
+        s: {c: [] for c in _CLASSES} for s in _SETTINGS
+    }
+    seen: set[tuple[str, Class]] = set()
+    for (qa_id, cls), predicted in by_qa.items():
+        seen.add((qa_id, cls))
+        for setting in _SETTINGS:
+            positives = qrels.question_positives(qa_id, cls, setting=setting)
+            res = _prf(predicted, positives)
+            if res is not None:
+                per_cell[setting][cls].append(res)
+    return _macro_average(per_cell)
+
+
+def _macro_average(
+    per_cell: dict[Setting, dict[Class, list[PRF]]],
+) -> dict[str, dict[str, dict[str, float]]]:
     out: dict[str, dict[str, dict[str, float]]] = {}
     for setting in _SETTINGS:
         out[setting] = {}
@@ -127,8 +174,6 @@ def evaluate(submission_path: Path, qrels: QrelsIndex) -> dict[str, dict[str, di
             if not cells:
                 out[setting][cls] = {"P": 0.0, "R": 0.0, "F1": 0.0}
             else:
-                # Macro-average P and R; compute F1 from averaged P/R to match
-                # the published convention (per-class P/R/F1, not mean F1).
                 avg_p = mean(c.P for c in cells)
                 avg_r = mean(c.R for c in cells)
                 avg_f1 = (2 * avg_p * avg_r / (avg_p + avg_r)) if (avg_p + avg_r) else 0.0
@@ -141,10 +186,16 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--submission", required=True, type=Path)
     p.add_argument("--qrels", required=True, type=Path)
     p.add_argument("--out", type=Path, help="Optional JSON output path")
+    p.add_argument(
+        "--level",
+        choices=["sentence", "question"],
+        default="sentence",
+        help="sentence (default, for 2025 qrels) or question (for 2024 collection)",
+    )
     a = p.parse_args(argv)
 
     qrels = load_qrels(a.qrels)
-    report = evaluate(a.submission, qrels)
+    report = evaluate(a.submission, qrels, level=a.level)
     text = json.dumps(report, indent=2)
     print(text)
     if a.out:

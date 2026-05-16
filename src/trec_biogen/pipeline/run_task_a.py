@@ -22,6 +22,7 @@ Tasks: 11.1 (Hydra + metadata), 11.3 (MLflow).
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +46,20 @@ from trec_biogen.retrieval.bm25 import BM25Index
 def _repo_root() -> Path:
     """The project root — Hydra changes CWD, so we resolve via this file's path."""
     return Path(__file__).resolve().parents[3]
+
+
+def _maybe_run(out_path: Path, fn, *args, _logger=None, **kwargs) -> Path:
+    """Run ``fn(*args, out_path=out_path, **kwargs)`` unless ``out_path`` already exists.
+
+    Lets a crashed run resume by setting ``BIOGEN_RUN_DIR=<dir>`` to point
+    at the previous run directory: phases whose output Parquet survived are
+    skipped and we pick up from the first missing one.
+    """
+    if out_path.exists() and out_path.stat().st_size > 0:
+        if _logger is not None:
+            _logger.info(f"reusing existing {out_path.name} ({out_path.stat().st_size} bytes)")
+        return out_path
+    return fn(*args, out_path=out_path, **kwargs)
 
 
 def _start_mlflow_run(run_dir: Path, resolved: dict[str, Any]) -> Any:
@@ -81,13 +96,19 @@ def _log_metrics(report: dict[str, dict[str, dict[str, float]]], year: str) -> N
                 mlflow.log_metric(f"{year}_{setting}_{cls}_{metric}", val)
 
 
-@hydra.main(version_base=None, config_path="../../../configs/run", config_name="phase1_baseline")
+@hydra.main(version_base=None, config_path="../../../configs", config_name="run/phase1_baseline")
 def main(cfg: DictConfig) -> None:
     repo = _repo_root()
     resolved = OmegaConf.to_container(cfg, resolve=True)
     assert isinstance(resolved, dict)
 
-    run_dir = repo / cfg.paths.runs_dir / metadata.run_id(cfg.run.label)
+    # BIOGEN_RUN_DIR lets you point at an existing run_dir to resume a crashed
+    # pipeline — existing intermediate parquets are reused.
+    reuse_dir = os.environ.get("BIOGEN_RUN_DIR")
+    if reuse_dir:
+        run_dir = Path(reuse_dir)
+    else:
+        run_dir = repo / cfg.paths.runs_dir / metadata.run_id(cfg.run.label)
     run_dir.mkdir(parents=True, exist_ok=True)
     metadata.configure_logger(run_dir)
     try:
@@ -111,69 +132,77 @@ def main(cfg: DictConfig) -> None:
 
     try:
         logger.info("phase 1: BM25 k=100 (support)")
-        retrieval_sup = phases.retrieve(
-            topics, bm,
-            k=cfg.retrieval.support_k,
-            out_path=run_dir / "retrieval_support.parquet",
+        retrieval_sup = _maybe_run(
+            run_dir / "retrieval_support.parquet",
+            phases.retrieve, topics, bm,
+            k=cfg.retrieval.support_k, _logger=logger,
         )
         logger.info("phase 1': BM25 k=1000 (contradict)")
-        retrieval_con = phases.retrieve(
-            topics, bm,
-            k=cfg.retrieval.contradict_k,
-            out_path=run_dir / "retrieval_contradict.parquet",
+        retrieval_con = _maybe_run(
+            run_dir / "retrieval_contradict.parquet",
+            phases.retrieve, topics, bm,
+            k=cfg.retrieval.contradict_k, _logger=logger,
         )
 
         logger.info("phase 2: MedCPT-CE rerank (support)")
-        rerank_sup = rerank_support(
-            retrieval_sup, bm,
-            out_path=run_dir / "rerank_support.parquet",
+        rerank_sup = _maybe_run(
+            run_dir / "rerank_support.parquet",
+            rerank_support, retrieval_sup, bm,
+            model_name=cfg.rerank.model,
             batch_size=cfg.rerank.batch_size,
-            top_k=cfg.rerank.top_k,
+            top_k=cfg.rerank.top_k, _logger=logger,
         )
         unload()  # release MedCPT-CE before DeBERTa loads
 
         logger.info("phase 3: DeBERTa-MNLI entailment (support)")
-        nli_sup = score_support(
-            rerank_sup, bm,
-            out_path=run_dir / "nli_support.parquet",
+        nli_sup = _maybe_run(
+            run_dir / "nli_support.parquet",
+            score_support, rerank_sup, bm,
             model_name=cfg.nli.support.model,
-            batch_size=cfg.nli.support.batch_size,
+            batch_size=cfg.nli.support.batch_size, _logger=logger,
         )
 
         logger.info("phase 3': abstract segmentation (contradict)")
-        seg = phases.segment_abstracts(
-            retrieval_con, bm,
-            out_path=run_dir / "segmented_contradict.parquet",
+        seg = _maybe_run(
+            run_dir / "segmented_contradict.parquet",
+            phases.segment_abstracts, retrieval_con, bm,
+            _logger=logger,
         )
         logger.info("phase 3'': NegEx + cue-list filter")
-        counts = filter_negated(
-            seg,
-            out_parquet=run_dir / "negex_contradict.parquet",
-            audit_jsonl=run_dir / "negation_audit.jsonl",
-            audit_sample=cfg.nli.contradict.audit_sample,
-        )
-        logger.info(f"negex counts: {counts}")
+        negex_out = run_dir / "negex_contradict.parquet"
+        if negex_out.exists() and negex_out.stat().st_size > 0:
+            logger.info(f"reusing existing {negex_out.name}")
+        else:
+            counts = filter_negated(
+                seg,
+                out_parquet=negex_out,
+                audit_jsonl=run_dir / "negation_audit.jsonl",
+                audit_sample=cfg.nli.contradict.audit_sample,
+            )
+            logger.info(f"negex counts: {counts}")
 
-        logger.info("phase 4: SciFive-MedNLI contradiction NLI")
-        # The contradict NLI also needs sentence_text per row; join in.
+        logger.info("phase 4: contradiction NLI (DeBERTa, sentence-level pairs)")
         import polars as pl
 
-        negex_df = pl.read_parquet(run_dir / "negex_contradict.parquet")
-        ret_df = pl.read_parquet(retrieval_con).select(
-            ["qa_id", "sentence_id", "sentence_text"]
-        ).unique()
-        pair_df = negex_df.join(ret_df, on=["qa_id", "sentence_id"], how="left")
-        pair_df.write_parquet(run_dir / "pairs_contradict.parquet")
+        pairs_path = run_dir / "pairs_contradict.parquet"
+        if not (pairs_path.exists() and pairs_path.stat().st_size > 0):
+            negex_df = pl.read_parquet(negex_out)
+            ret_df = pl.read_parquet(retrieval_con).select(
+                ["qa_id", "sentence_id", "sentence_text"]
+            ).unique()
+            pair_df = negex_df.join(ret_df, on=["qa_id", "sentence_id"], how="left")
+            pair_df.write_parquet(pairs_path)
 
-        nli_con_pairs = score_contradict_pairs(
-            run_dir / "pairs_contradict.parquet",
-            out_path=run_dir / "nli_contradict_pairs.parquet",
+        nli_con_pairs = _maybe_run(
+            run_dir / "nli_contradict_pairs.parquet",
+            score_contradict_pairs, pairs_path,
             model_name=cfg.nli.contradict.model,
-            batch_size=cfg.nli.contradict.batch_size,
+            batch_size=cfg.nli.contradict.batch_size, _logger=logger,
         )
         logger.info("phase 5: aggregate contradiction max-pool")
-        nli_con = phases.aggregate_contradict(
-            nli_con_pairs, out_path=run_dir / "nli_contradict.parquet"
+        nli_con = _maybe_run(
+            run_dir / "nli_contradict.parquet",
+            phases.aggregate_contradict, nli_con_pairs, _logger=logger,
         )
 
         logger.info("phase 6: selection + submission")

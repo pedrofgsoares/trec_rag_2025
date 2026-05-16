@@ -15,6 +15,7 @@ from typing import Literal
 import polars as pl
 
 from trec_biogen.io.topics import Topic
+from trec_biogen.pipeline.sentences import split_sentences
 from trec_biogen.retrieval.bm25 import BM25Index, Hit
 
 

@@ -12,6 +12,10 @@
 
 set -euo pipefail
 
+# Pyserini 0.43 needs OPENAI_API_KEY at module load time (see comment in
+# scripts/run_starter_baseline.sh). Placeholder satisfies the constructor.
+export OPENAI_API_KEY="${OPENAI_API_KEY:-not-used-by-this-pipeline}"
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # Same override as download_pubmed.sh — raw corpus may live on /mnt/c/...
 RAW_DIR="${BIOGEN_RAW_DIR:-${REPO_ROOT}/data/raw/pubmed_baseline}"

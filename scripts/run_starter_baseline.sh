@@ -15,6 +15,11 @@
 
 set -euo pipefail
 
+# Pyserini 0.43 imports pyserini.encode._openai at module load time which
+# requires OPENAI_API_KEY in the env. We don't use OpenAI; a placeholder
+# satisfies the constructor.
+export OPENAI_API_KEY="${OPENAI_API_KEY:-not-used-by-this-pipeline}"
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STARTER_DIR="${REPO_ROOT}/external/starter-kit-2025"
 INDEX_LINK="${STARTER_DIR}/data/indexes/pubmed_baseline_collection_jsonl"

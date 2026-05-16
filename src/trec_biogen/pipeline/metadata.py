@@ -42,11 +42,13 @@ def hardware_fingerprint() -> dict[str, Any]:
     try:
         import torch
 
-        fp["torch"] = torch.__version__
+        # torch.__version__ is a TorchVersion (str subclass); yaml.safe_dump
+        # matches by exact type, so we coerce to plain str.
+        fp["torch"] = str(torch.__version__)
         if torch.cuda.is_available():
-            fp["cuda_device"] = torch.cuda.get_device_name(0)
+            fp["cuda_device"] = str(torch.cuda.get_device_name(0))
             fp["cuda_total_gib"] = round(
-                torch.cuda.get_device_properties(0).total_memory / 1024**3, 2
+                int(torch.cuda.get_device_properties(0).total_memory) / 1024**3, 2
             )
     except ImportError:
         pass

@@ -1,7 +1,7 @@
 ## 1. Environment & Hardware Provisioning
 
-- [ ] 1.1 Operator: bump WSL2 RAM to ≥12 GB via host `C:\Users\<user>\.wslconfig` (`[wsl2] memory=12GB swap=8GB`) and run `wsl --shutdown` <!-- NOT yet effective: dmesg shows hv_balloon max=8078 MB (2026-05-14). Verify .wslconfig path/content/encoding per SETUP.md §1.1 -->
-- [ ] 1.2 Verify post-restart: `free -h` reports ≥11 GiB total inside WSL <!-- gated on 1.1 actually taking effect -->
+- [x] 1.1 Operator: bump WSL2 RAM to ≥12 GB via host `C:\Users\<user>\.wslconfig` (`[wsl2] memory=12GB swap=8GB`) and run `wsl --shutdown` <!-- verified 2026-05-14: empty .wslconfig fixed; restart applied -->
+- [x] 1.2 Verify post-restart: `free -h` reports ≥11 GiB total inside WSL <!-- free -h: 11 GiB total -->
 - [x] 1.3 Install OpenJDK 21 (`sudo apt install openjdk-21-jdk-headless`) and confirm `java -version`
 - [x] 1.4 Install Python 3.11 via `pyenv` and create project venv with `uv venv` <!-- done via uv python install 3.11 + uv venv --python 3.11 (pyenv-free per SETUP.md §1.4) -->
 
@@ -42,7 +42,7 @@
 
 ## 6. Baseline Reproduction (capability: evaluation)
 
-- [x] 6.1 Vendor or git-submodule the `trec-biogen/starter-kit-2025` repo under `external/starter-kit-2025/` <!-- via scripts/vendor_starter_kit.sh; clone gated on operator network -->
+- [x] 6.1 Vendor or git-submodule the `trec-biogen/starter-kit-2025` repo under `external/starter-kit-2025/` <!-- vendored locally from /mnt/c/.../starter-kit-2025-master.zip; index + task_a.json symlinked into place -->
 - [x] 6.2 Write `scripts/run_starter_baseline.sh` that runs the unmodified starter-kit baseline against the official 2025 input
 - [x] 6.3 Implement `src/trec_biogen/eval/metrics.py` computing per-class P/R/F1 under Strict and Relaxed settings
 - [x] 6.4 Implement `make baseline-check` (or `scripts/baseline_check.sh`) that runs starter baseline + eval and asserts F1 within ±2 of (44.34, 4.67)
