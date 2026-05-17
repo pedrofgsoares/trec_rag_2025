@@ -17,10 +17,13 @@ from typing import Any
 def _nlp() -> Any:
     import spacy  # local import: heavy
 
+    # Disable everything heavy. en_core_sci_sm doesn't ship a trained
+    # `senter` component, so adding one without initialize() raises E109.
+    # `sentencizer` is rule-based (no weights), fast, and adequate for
+    # feeding biomedical sentences to NLI.
     nlp = spacy.load("en_core_sci_sm", disable=["ner", "tagger", "lemmatizer", "parser"])
-    # Use the lightweight sentence segmenter rather than the full parser.
-    if "senter" not in nlp.pipe_names and "parser" not in nlp.pipe_names:
-        nlp.add_pipe("senter")
+    if not any(p in nlp.pipe_names for p in ("sentencizer", "senter", "parser")):
+        nlp.add_pipe("sentencizer")
     return nlp
 
 

@@ -78,12 +78,19 @@ def _negated_by_negspacy(text: str) -> bool:
 
 
 def has_negation(text: str) -> bool:
-    """Return True if ``text`` matches a cue pattern or contains a negated entity."""
+    """Return True if ``text`` matches one of the 23 biomedical cue patterns.
+
+    Phase 1 uses cue-regex only. The original design also fell back to
+    scispaCy NegEx (NER + parser per sentence) when the cue regex missed,
+    but that costs ~30 ms/sentence and produces hours of latency on the
+    ~1.5 M segmented abstract sentences our contradict path generates.
+    Empirically the cue regex catches the dominant signal; scispaCy NegEx
+    is deferred to Phase 2 where we can tune it on a smaller candidate
+    pool. The ``_negated_by_negspacy`` helper below is kept for that work.
+    """
     if not text:
         return False
-    if _CUE_RE.search(text):
-        return True
-    return _negated_by_negspacy(text)
+    return bool(_CUE_RE.search(text))
 
 
 def filter_negated(

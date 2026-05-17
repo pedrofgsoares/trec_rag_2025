@@ -2,7 +2,9 @@
 data/
 runs/
 .hydra/
+outputs/       # Hydra's per-invocation working dirs
 *.parquet
+models/        # local HF model snapshots (re-fetchable via scripts/)
 
 # Python
 __pycache__/
