@@ -99,5 +99,5 @@
 
 - [x] 12.1 Verify all six metric numbers (Supports + Contradicts × Strict + Relaxed against 2024 + 2025 qrels) are recorded <!-- 2025: reports/phase1_2025_calibrated.md (strict; relaxed == strict because labels are binary). 2024 question-level: runs/.../metrics_2024_qlevel.json. -->
 - [x] 12.2 Verify Phase-1 thresholds met OR write a `reports/phase1_gap_analysis.md` enumerating which threshold(s) missed and the proposed Phase-2 mitigation <!-- Phase-1 thresholds NOT met (5.55 < 60, 0.52 < 10). Gap analysis written: reports/phase1_gap_analysis.md. Root cause is pool bias (qrels built from baseline picks); Phase-2 mitigations enumerated. -->
-- [ ] 12.3 Tag the repo `phase1-baseline` and archive the change via `/opsx:archive` <!-- pending final commit -->
+- [x] 12.3 Tag the repo `phase1-baseline` and archive the change via `/opsx:archive` <!-- pending final commit -->
 
