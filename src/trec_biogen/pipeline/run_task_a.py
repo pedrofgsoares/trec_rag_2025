@@ -119,9 +119,30 @@ def main(cfg: DictConfig) -> None:
         logger = _L()  # type: ignore[assignment]
 
     logger.info(f"run_dir={run_dir}")
+
+    # --reuse-from=<path>: symlink intermediate parquets from a prior run dir
+    # into this run dir so _maybe_run() skips the upstream phases. Used by
+    # Phase 2 ablation variants that only change a downstream phase.
+    reuse_from = cfg.get("reuse_from") if hasattr(cfg, "get") else None
+    if reuse_from:
+        src = Path(reuse_from)
+        if not src.is_dir():
+            raise FileNotFoundError(f"--reuse-from path does not exist: {src}")
+        linked = 0
+        for parquet in src.glob("*.parquet"):
+            link = run_dir / parquet.name
+            if link.exists() or link.is_symlink():
+                continue
+            link.symlink_to(parquet.resolve())
+            linked += 1
+        logger.info(f"reuse-from {src}: symlinked {linked} parquet files into {run_dir.name}")
+
     pf = preflight.run(repo / cfg.paths.index_dir)
     metadata.snapshot(run_dir=run_dir, resolved_config=resolved, repo_root=repo, preflight=pf)
     mlflow_run = _start_mlflow_run(run_dir, resolved)
+
+    # Phase 2 per-phase timing + VRAM accumulator.
+    phase_results: dict[str, Any] = {}
 
     bm = BM25Index(
         repo / cfg.paths.index_dir,
@@ -132,54 +153,60 @@ def main(cfg: DictConfig) -> None:
 
     try:
         logger.info("phase 1: BM25 k=100 (support)")
-        retrieval_sup = _maybe_run(
-            run_dir / "retrieval_support.parquet",
-            phases.retrieve, topics, bm,
-            k=cfg.retrieval.support_k, _logger=logger,
-        )
+        with metadata.phase_timer("retrieve_support", phase_results):
+            retrieval_sup = _maybe_run(
+                run_dir / "retrieval_support.parquet",
+                phases.retrieve, topics, bm,
+                k=cfg.retrieval.support_k, _logger=logger,
+            )
         logger.info("phase 1': BM25 k=1000 (contradict)")
-        retrieval_con = _maybe_run(
-            run_dir / "retrieval_contradict.parquet",
-            phases.retrieve, topics, bm,
-            k=cfg.retrieval.contradict_k, _logger=logger,
-        )
+        with metadata.phase_timer("retrieve_contradict", phase_results):
+            retrieval_con = _maybe_run(
+                run_dir / "retrieval_contradict.parquet",
+                phases.retrieve, topics, bm,
+                k=cfg.retrieval.contradict_k, _logger=logger,
+            )
 
         logger.info("phase 2: MedCPT-CE rerank (support)")
-        rerank_sup = _maybe_run(
-            run_dir / "rerank_support.parquet",
-            rerank_support, retrieval_sup, bm,
-            model_name=cfg.rerank.model,
-            batch_size=cfg.rerank.batch_size,
-            top_k=cfg.rerank.top_k, _logger=logger,
-        )
+        with metadata.phase_timer("rerank_support", phase_results):
+            rerank_sup = _maybe_run(
+                run_dir / "rerank_support.parquet",
+                rerank_support, retrieval_sup, bm,
+                model_name=cfg.rerank.model,
+                batch_size=cfg.rerank.batch_size,
+                top_k=cfg.rerank.top_k, _logger=logger,
+            )
         unload()  # release MedCPT-CE before DeBERTa loads
 
         logger.info("phase 3: DeBERTa-MNLI entailment (support)")
-        nli_sup = _maybe_run(
-            run_dir / "nli_support.parquet",
-            score_support, rerank_sup, bm,
-            model_name=cfg.nli.support.model,
-            batch_size=cfg.nli.support.batch_size, _logger=logger,
-        )
+        with metadata.phase_timer("nli_support", phase_results):
+            nli_sup = _maybe_run(
+                run_dir / "nli_support.parquet",
+                score_support, rerank_sup, bm,
+                model_name=cfg.nli.support.model,
+                batch_size=cfg.nli.support.batch_size, _logger=logger,
+            )
 
         logger.info("phase 3': abstract segmentation (contradict)")
-        seg = _maybe_run(
-            run_dir / "segmented_contradict.parquet",
-            phases.segment_abstracts, retrieval_con, bm,
-            _logger=logger,
-        )
+        with metadata.phase_timer("segment_contradict", phase_results):
+            seg = _maybe_run(
+                run_dir / "segmented_contradict.parquet",
+                phases.segment_abstracts, retrieval_con, bm,
+                _logger=logger,
+            )
         logger.info("phase 3'': NegEx + cue-list filter")
         negex_out = run_dir / "negex_contradict.parquet"
-        if negex_out.exists() and negex_out.stat().st_size > 0:
-            logger.info(f"reusing existing {negex_out.name}")
-        else:
-            counts = filter_negated(
-                seg,
-                out_parquet=negex_out,
-                audit_jsonl=run_dir / "negation_audit.jsonl",
-                audit_sample=cfg.nli.contradict.audit_sample,
-            )
-            logger.info(f"negex counts: {counts}")
+        with metadata.phase_timer("negex_filter", phase_results):
+            if negex_out.exists() and negex_out.stat().st_size > 0:
+                logger.info(f"reusing existing {negex_out.name}")
+            else:
+                counts = filter_negated(
+                    seg,
+                    out_parquet=negex_out,
+                    audit_jsonl=run_dir / "negation_audit.jsonl",
+                    audit_sample=cfg.nli.contradict.audit_sample,
+                )
+                logger.info(f"negex counts: {counts}")
 
         logger.info("phase 4: contradiction NLI (DeBERTa, sentence-level pairs)")
         import polars as pl
@@ -193,17 +220,19 @@ def main(cfg: DictConfig) -> None:
             pair_df = negex_df.join(ret_df, on=["qa_id", "sentence_id"], how="left")
             pair_df.write_parquet(pairs_path)
 
-        nli_con_pairs = _maybe_run(
-            run_dir / "nli_contradict_pairs.parquet",
-            score_contradict_pairs, pairs_path,
-            model_name=cfg.nli.contradict.model,
-            batch_size=cfg.nli.contradict.batch_size, _logger=logger,
-        )
+        with metadata.phase_timer("nli_contradict_pairs", phase_results):
+            nli_con_pairs = _maybe_run(
+                run_dir / "nli_contradict_pairs.parquet",
+                score_contradict_pairs, pairs_path,
+                model_name=cfg.nli.contradict.model,
+                batch_size=cfg.nli.contradict.batch_size, _logger=logger,
+            )
         logger.info("phase 5: aggregate contradiction max-pool")
-        nli_con = _maybe_run(
-            run_dir / "nli_contradict.parquet",
-            phases.aggregate_contradict, nli_con_pairs, _logger=logger,
-        )
+        with metadata.phase_timer("aggregate_contradict", phase_results):
+            nli_con = _maybe_run(
+                run_dir / "nli_contradict.parquet",
+                phases.aggregate_contradict, nli_con_pairs, _logger=logger,
+            )
 
         logger.info("phase 6: selection + submission")
         selection = select(
@@ -262,6 +291,17 @@ def main(cfg: DictConfig) -> None:
             import mlflow
 
             mlflow.end_run()
+        # Append Phase 2 totals + per-phase timings to metadata.yaml.
+        # phase2_variant is read from the resolved Hydra config; default None.
+        phase2_variant = (
+            resolved.get("phase2_variant") if isinstance(resolved, dict) else None
+        )
+        metadata.update_run_metadata(
+            run_dir,
+            phase_results=phase_results,
+            phase2_variant=phase2_variant,
+            judge_cost_usd=0.0,
+        )
 
 
 if __name__ == "__main__":

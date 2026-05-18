@@ -14,6 +14,8 @@ from typing import Literal
 
 import polars as pl
 
+from tqdm.auto import tqdm
+
 from trec_biogen.io.topics import Topic
 from trec_biogen.pipeline.sentences import split_sentences
 from trec_biogen.retrieval.bm25 import BM25Index, Hit
@@ -74,8 +76,9 @@ def segment_abstracts(
     unique_pmids = df["candidate_pmid"].unique().to_list()
 
     # Cache pmid -> [sentence] to avoid re-segmenting popular docs.
+    # Progress bar advances per PMID (the dominant cost = Lucene fetch + scispaCy parse).
     seg_cache: dict[str, list[str]] = {}
-    for pmid in unique_pmids:
+    for pmid in tqdm(unique_pmids, desc="segment_abstracts", unit="pmid"):
         text = bm25.doc_text(pmid)
         seg_cache[pmid] = split_sentences(text) if text else []
 

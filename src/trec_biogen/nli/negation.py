@@ -107,9 +107,13 @@ def filter_negated(
     ``audit_jsonl`` is set, writes a sampled JSONL of dropped rows for the
     operator review required by task 8.6.
     """
+    from tqdm.auto import tqdm
+
     df = pl.read_parquet(long_parquet)
     texts = df["abstract_sentence_text"].to_list()
-    keep_mask = [has_negation(t) for t in texts]
+    # Progress bar advances per sentence (regex match is fast but ~1.9M of them
+    # means it still takes ~minutes; the bar tells the operator the phase isn't stuck).
+    keep_mask = [has_negation(t) for t in tqdm(texts, desc="filter_negated", unit="sent")]
     kept = df.filter(pl.Series("__keep__", keep_mask))
     dropped = df.filter(pl.Series("__keep__", [not k for k in keep_mask]))
 
