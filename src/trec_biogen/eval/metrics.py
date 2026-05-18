@@ -60,11 +60,29 @@ class PRF:
         return {"P": self.P, "R": self.R, "F1": self.F1}
 
 
-def _prf(predicted: Iterable[str], positives: set[str]) -> PRF | None:
-    """Return per-cell P/R/F1 or None if the cell is unjudged (no positives)."""
-    if not positives:
-        return None
+def _prf(
+    predicted: Iterable[str],
+    positives: set[str],
+    *,
+    unjudged_as_zero: bool = True,
+) -> PRF | None:
+    """Return per-cell P/R/F1.
+
+    ``unjudged_as_zero``:
+      * ``True`` (default, matches the published BioGEN 2025 methodology):
+        a cell with empty ``positives`` AND a non-empty ``predicted`` set
+        contributes ``F1=0`` to the macro. Reproduces the published
+        organizers-baseline numbers (Support F1 = 44.34, Contradict F1 ≈ 4.67).
+      * ``False`` (legacy): unjudged cells are dropped, so the macro
+        averages only over judged cells. Useful when comparing across
+        qrels of different judgement coverage (e.g. partial 2024 question-
+        level qrels).
+    """
     pred = set(predicted)
+    if not positives:
+        if unjudged_as_zero and pred:
+            return PRF(0.0, 0.0, 0.0)
+        return None
     if not pred:
         return PRF(0.0, 0.0, 0.0)
     tp = len(pred & positives)
@@ -112,6 +130,7 @@ def evaluate(
     qrels: QrelsIndex,
     *,
     level: Literal["sentence", "question"] = "sentence",
+    unjudged_as_zero: bool | None = None,
 ) -> dict[str, dict[str, dict[str, float]]]:
     """Return {setting: {class: {P,R,F1}}} macro-averaged across judged cells.
 
@@ -125,8 +144,16 @@ def evaluate(
         2024 where the source qrels references each team's generated
         answer-sentences). Aggregates per qa_id rather than per cell.
     """
+    # Sentence-level: by default mirror the published BioGEN 2025 protocol
+    # (unjudged cells count as F1=0 if the submission predicts something).
+    # Question-level: by default drop unjudged cells (cross-year fallback).
+    if unjudged_as_zero is None:
+        unjudged_as_zero = (level == "sentence")
+
     if level == "question":
-        return _evaluate_question_level(submission_path, qrels)
+        return _evaluate_question_level(
+            submission_path, qrels, unjudged_as_zero=unjudged_as_zero
+        )
 
     per_cell: dict[Setting, dict[Class, list[PRF]]] = {
         s: {c: [] for c in _CLASSES} for s in _SETTINGS
@@ -134,14 +161,14 @@ def evaluate(
     for qa_id, sid, cls, predicted in _iter_submission_cells(submission_path):
         for setting in _SETTINGS:
             positives = qrels.positives(qa_id, sid, cls, setting=setting)
-            res = _prf(predicted, positives)
+            res = _prf(predicted, positives, unjudged_as_zero=unjudged_as_zero)
             if res is not None:
                 per_cell[setting][cls].append(res)
     return _macro_average(per_cell)
 
 
 def _evaluate_question_level(
-    submission_path: Path, qrels: QrelsIndex
+    submission_path: Path, qrels: QrelsIndex, *, unjudged_as_zero: bool = False,
 ) -> dict[str, dict[str, dict[str, float]]]:
     # Union predictions per (qa_id, class) across sentences.
     by_qa: dict[tuple[str, Class], set[str]] = {}
@@ -152,12 +179,10 @@ def _evaluate_question_level(
     per_cell: dict[Setting, dict[Class, list[PRF]]] = {
         s: {c: [] for c in _CLASSES} for s in _SETTINGS
     }
-    seen: set[tuple[str, Class]] = set()
     for (qa_id, cls), predicted in by_qa.items():
-        seen.add((qa_id, cls))
         for setting in _SETTINGS:
             positives = qrels.question_positives(qa_id, cls, setting=setting)
-            res = _prf(predicted, positives)
+            res = _prf(predicted, positives, unjudged_as_zero=unjudged_as_zero)
             if res is not None:
                 per_cell[setting][cls].append(res)
     return _macro_average(per_cell)
@@ -166,6 +191,8 @@ def _evaluate_question_level(
 def _macro_average(
     per_cell: dict[Setting, dict[Class, list[PRF]]],
 ) -> dict[str, dict[str, dict[str, float]]]:
+    """Macro-average per (setting, class). F1 is mean-of-per-cell-F1s, matching
+    the published BioGEN 2025 methodology. P and R are macro means."""
     out: dict[str, dict[str, dict[str, float]]] = {}
     for setting in _SETTINGS:
         out[setting] = {}
@@ -174,10 +201,11 @@ def _macro_average(
             if not cells:
                 out[setting][cls] = {"P": 0.0, "R": 0.0, "F1": 0.0}
             else:
-                avg_p = mean(c.P for c in cells)
-                avg_r = mean(c.R for c in cells)
-                avg_f1 = (2 * avg_p * avg_r / (avg_p + avg_r)) if (avg_p + avg_r) else 0.0
-                out[setting][cls] = {"P": avg_p, "R": avg_r, "F1": avg_f1}
+                out[setting][cls] = {
+                    "P":  mean(c.P  for c in cells),
+                    "R":  mean(c.R  for c in cells),
+                    "F1": mean(c.F1 for c in cells),
+                }
     return out
 
 
