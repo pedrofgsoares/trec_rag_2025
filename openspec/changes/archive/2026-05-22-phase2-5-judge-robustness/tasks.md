@@ -78,5 +78,6 @@
   > 213 passed, 4 skipped (env-gated). §6.5 anchor: Sup F1 = 44.34 (exact match), Con F1 = 4.21 (within ±2.0 of published 4.67). Zero regressions.
 - [x] 7.2 Verify the cost ledger: total Together rejudge spend stayed within the $2 cap; update the cost ledger in `reports/phase2_summary_commentary.md`
   > Together attempt aborted at $0.01 (HTTP 402); pivoted to HF Inference Providers, total spend $2.47 (within $3 cap). Cost ledger in commentary updated: new Phase 2.5 total $5.16 (Phase 2 $2.68 + Phase 2.5 $2.47).
-- [ ] 7.3 Commit the change as a single `feat(phase2.5):` commit; tag `phase2.5-baseline` if the `no_negex` finding survives the intersection pool, otherwise tag `phase2.5-judge-robustness` (signalling the result is methodological hardening rather than a structural reinforcement)
-- [ ] 7.4 Archive the change via `/opsx:archive`
+- [x] 7.3 Commit the change as a single `feat(phase2.5):` commit; tag `phase2.5-baseline` if the `no_negex` finding survives the intersection pool, otherwise tag `phase2.5-judge-robustness` (signalling the result is methodological hardening rather than a structural reinforcement)
+  > Two commits (feat + Codex-review fixes): `f57f017` (feat: 27 files, +2938 -32) + `7b2d50b` (fix: 7 files, +190 -24). Tag `phase2.5-baseline` annotated on HEAD (`7b2d50b`) — chosen because `no_negex` survived the conservative-pool stress test (3.63 [1.98, 5.38] vs Phase 1 1.07 [0.26, 2.04]).
+- [x] 7.4 Archive the change via `/opsx:archive`
