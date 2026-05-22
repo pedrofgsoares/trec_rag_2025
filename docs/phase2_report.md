@@ -714,6 +714,104 @@ finding (RM3 hurts), shows the LLM-filtered PRF literature is
 correct on its own terms (LLM filtering > blind PRF), and falsifies
 the textbook IR assumption that *any* PRF helps on *any* task.
 
+### 10.8 Judge robustness and per-topic analysis (Phase 2.5)
+
+After Phase 2 sign-off, two methodological gaps remained: (i) the
+§11.3 structural claim that `phase2_no_negex` beats Phase 1 on
+contradicts rested on a *single-judge* expanded pool (`gpt-4o-mini
+--prompt cot`), even though §12.4 had already established that
+Contradicts F1 carries judge-dependent variance (κ overall 0.34, with
+the asymmetry concentrated on the contradict class); and (ii) the
+quantitative summary did not surface the per-topic distribution of
+gains and losses, so a reader could not see where the aggregate F1
+numbers actually came from. Phase 2.5 closed both.
+
+A second LLM-judge rejudge was performed on the same 5398 candidate
+triples from §2.17 using `Llama-3.3-70B-Instruct --prompt cot`
+(hosted via the HuggingFace Inference Providers router, auto-routed
+to Groq). The model weights are identical to the Together-hosted
+endpoint that cleared the §12.4 gate at κ=0.9112 [0.886, 0.936], so
+no re-validation was required. Cost: $2.47 for the full pass
+(~21 min wall-clock). The cross-judge agreement on the 5398-triple
+set was *strongly asymmetric*: Jaccard 0.93 on Supports, **0.12 on
+Contradicts** (43 agreed of 378 union). Llama emits 6.3× fewer
+Contradicts than mini under the same CoT temperature — the §12.4
+asymmetry, amplified at scale.
+
+A **two-judge intersection-on-contradicts pool** was then derived:
+human positives copied verbatim, Supports passed through from the
+canonical mini-cot pool (where the judges agree), Contradicts kept
+only when both judges independently labelled the same triple as
+Contradicts. The pool went from 4 758 to 4 438 total positives — the
+88 % drop is entirely on the Contradicts class (363 → 43). This is a
+deliberately strict pool: it represents "what would survive a
+two-juror unanimity requirement", at the cost of pushing the
+Contradicts macro toward the sampling-noise floor (43 positives across
+313 cells, mean 0.14 per cell).
+
+A `--qrels-pool=intersection` flag was wired end-to-end through
+`eval/metrics.py` and `eval/phase2_summary.py`. Cell-level bootstrap
+CIs (B=1 000 resamples, seed=0, 95% percentile interval) were
+computed for every existing run on the intersection pool. The
+results:
+
+| variant | Supports F1 (intersection) | Contradicts F1 (intersection) |
+|---|---|---|
+| starter_baseline | 16.55 [15.01, 18.25] | **4.01 [2.13, 6.13]** |
+| Phase 1 | 16.43 [15.15, 17.80] | 1.07 [0.26, 2.04] |
+| `no_negex` | 16.33 [15.15, 17.59] | **3.63 [1.98, 5.38]** |
+| `scifive_large` | 16.43 [15.09, 17.73] | 2.21 [0.88, 3.79] |
+| `allow_existing` | 16.94 [15.59, 18.26] | 1.07 [0.21, 2.10] |
+| `bm25_rm3` | 8.97 [7.79, 10.21] | 0.55 [0.00, 1.32] |
+
+Two findings emerge under the conservative pool. **First**, the
+structural Phase 2 claim survives: `no_negex` beats Phase 1 on
+Contradicts (3.63 vs 1.07, ~3.4× the midpoint, lower-CI overlap is
+marginal). **Second**, the expanded-pool reading "no_negex >>>
+starter on contradicts" (12.01 vs 5.34) *does not* survive: 3.63 vs
+4.01 sits inside the CI overlap [2.13, 6.13] ∩ [1.98, 5.38]. The
+honest synthesis is that **starter and no_negex are statistically
+indistinguishable on the conservative-pool Contradicts macro**, and
+both clearly beat Phase 1 — meaning the Phase 2 contribution on
+Contradicts is real, but the *magnitude* visible on the expanded
+pool was inflated by liberal mini-cot ratifications that Llama did
+not corroborate. The three retrieval-side negative results
+(`bm25_rm3`, `bm25_rm3_llm_filtered`, `bm25_llm_rewrite`) survive
+the pool tightening unchanged: all sit several CIs below the
+~16-17 Supports band where every selection-side variant clusters.
+
+The per-topic dimension was added on top. Topics were selected
+mechanically (no cherry-picking) by ranking `phase1_baseline.topic_F1 −
+starter_baseline.topic_F1` on the intersection pool, Strict Supports,
+and taking the largest positive Δ (qa=150, +13.94 pp), the closest-to-
+zero (qa=120, +0.00), and the largest negative Δ (qa=131, −19.49 pp).
+The full sorted appendix is published in
+[`reports/per_topic_error_analysis.md`](../reports/per_topic_error_analysis.md);
+qualitative analysis there cites concrete PMIDs and the judge's verdict
+per PMID. The synthesis: Phase 1 wins on non-classical topics where
+MedCPT-CE surfaces LLM-confirmed-but-pool-invisible PMIDs (qa=150);
+ties on topics where both pipelines converge on the same understanding
+but cite disjoint valid evidence (qa=120, the pool-bias dance in
+microcosm); and loses on topics with sub-population-specific human-pool
+golds that the reranker demotes in favour of broader topical relevance
+(qa=131, formoterol side effects — Phase 1 actually wins sentences 1-2
+but loses sentences 4-5 on paediatric and cancer-patient subpopulations
+where small, curated literature dominates). The aggregate ~0.1 pp
+difference between Phase 1 and starter on the conservative-pool
+Supports hides these compositional effects; the per-topic view makes
+them visible.
+
+The full Phase 2.5 cost was $2.47 (HF Inference Providers, the
+Llama-3.3-70B rejudge). Code lives under
+[`src/trec_biogen/judge/intersection.py`](../src/trec_biogen/judge/intersection.py),
+[`src/trec_biogen/eval/per_topic.py`](../src/trec_biogen/eval/per_topic.py),
+and [`scripts/per_topic_diff.py`](../scripts/per_topic_diff.py); reports
+are [`reports/judge_intersection_analysis.md`](../reports/judge_intersection_analysis.md)
+and [`reports/per_topic_error_analysis.md`](../reports/per_topic_error_analysis.md).
+The Phase 2.5 work also added incremental-checkpoint atomic writes and
+5xx-retry semantics to the judge backend (lessons learned mid-run); see
+the change at `openspec/changes/archive/2026-05-22-phase2-5-judge-robustness/`.
+
 ---
 
 ## 11. Relation to the State of the Art

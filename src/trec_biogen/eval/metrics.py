@@ -56,6 +56,8 @@ _SETTINGS: tuple[Setting, ...] = ("strict", "relaxed")
 DEFAULT_QRELS_PATHS: dict[str, Path] = {
     "official": Path("data/qrels/biogen2025_taskA_qrels.jsonl"),
     "expanded": Path("data/qrels/biogen2025_taskA_qrels_expanded.jsonl"),
+    # Phase 2.5: two-judge intersection-on-contradicts pool.
+    "intersection": Path("data/qrels/biogen2025_taskA_qrels_intersection.jsonl"),
 }
 
 
@@ -237,6 +239,8 @@ def main(argv: list[str] | None = None) -> int:
         help="Convenience: pick the canonical qrels file for the given pool. "
              "'official' = data/qrels/biogen2025_taskA_qrels.jsonl. "
              "'expanded' = data/qrels/biogen2025_taskA_qrels_expanded.jsonl. "
+             "'intersection' = data/qrels/biogen2025_taskA_qrels_intersection.jsonl "
+             "(Phase 2.5: two-judge intersection-on-contradicts). "
              "Ignored when --qrels is set.",
     )
     p.add_argument(
@@ -257,6 +261,18 @@ def main(argv: list[str] | None = None) -> int:
     a = p.parse_args(argv)
 
     qrels_path = a.qrels if a.qrels is not None else DEFAULT_QRELS_PATHS[a.qrels_pool]
+    if not qrels_path.exists():
+        hint = {
+            "expanded": "Run `python -m trec_biogen.judge.rejudge expand-pool` first.",
+            "intersection": (
+                "Run `python -m trec_biogen.judge.intersection` after producing "
+                "both backends' expanded qrels (mini-cot canonical + Together)."
+            ),
+        }.get(a.qrels_pool, "")
+        msg = f"qrels file not found: {qrels_path}"
+        if hint:
+            msg += f"\n{hint}"
+        raise SystemExit(msg)
     qrels = load_qrels(qrels_path)
     report = evaluate(a.submission, qrels, level=a.level, source=a.source)
     text = json.dumps(report, indent=2)

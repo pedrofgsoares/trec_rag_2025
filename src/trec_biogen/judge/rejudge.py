@@ -130,9 +130,16 @@ def emit_expanded_qrels(
     (they do not contribute to either positive class). The sidecar
     ``<out>.meta.json`` carries the ``incomplete`` flag and the abort
     reason so the JSONL itself remains parseable by :func:`load_qrels`.
+
+    Phase 2.5: the write is **atomic** — content goes to ``<out>.tmp`` and
+    is renamed onto ``<out>`` via :func:`os.replace`, so a crash mid-write
+    cannot corrupt a prior checkpoint. The sidecar is written the same way.
     """
+    import os
+
     out_path.parent.mkdir(parents=True, exist_ok=True)
-    with out_path.open("w", encoding="utf-8") as fh:
+    tmp_path = out_path.with_suffix(out_path.suffix + ".tmp")
+    with tmp_path.open("w", encoding="utf-8") as fh:
         for line in human_qrels_path.read_text().splitlines():
             if not line.strip():
                 continue
@@ -153,9 +160,11 @@ def emit_expanded_qrels(
                 "confidence": round(r.confidence, 4),
             }
             fh.write(json.dumps(payload) + "\n")
+    os.replace(tmp_path, out_path)
 
     sidecar = out_path.with_suffix(out_path.suffix + ".meta.json")
-    sidecar.write_text(
+    sidecar_tmp = sidecar.with_suffix(sidecar.suffix + ".tmp")
+    sidecar_tmp.write_text(
         json.dumps(
             {
                 "incomplete": bool(incomplete),
@@ -166,6 +175,7 @@ def emit_expanded_qrels(
         )
         + "\n"
     )
+    os.replace(sidecar_tmp, sidecar)
     return out_path
 
 
@@ -338,6 +348,7 @@ def _judge_triples_and_emit(
     cost_cap: float | None,
     metadata_run_dir: Path | None = None,
     label: str = "rejudge",
+    checkpoint_every: int = 200,
 ) -> int:
     """Run the judge over ``all_triples``, write expanded qrels, return exit code.
 
@@ -347,19 +358,27 @@ def _judge_triples_and_emit(
     halt that still emits a partial expanded qrels with ``incomplete:
     true`` in the sidecar. Shared by :func:`cmd_rejudge` (§2.16) and
     :func:`cmd_expand_pool` (§2.17).
+
+    Phase 2.5: a checkpoint is written to ``out_path`` every
+    ``checkpoint_every`` newly-completed triples (atomic via
+    :func:`os.replace`). This bounds data loss on hibernation /
+    process crash to *at most* one checkpoint window — on re-launch,
+    resume mode picks up exactly where the last checkpoint stopped.
     """
     resumed = load_existing_llm_judgements(out_path)
     results: dict[tuple[str, int, str], JudgeRecord] = dict(resumed)
     remaining = [t for t in all_triples if t not in resumed]
     print(
         f"[{label}] triples: {len(all_triples)} "
-        f"(resumed {len(resumed)}, to classify {len(remaining)})"
+        f"(resumed {len(resumed)}, to classify {len(remaining)})",
+        flush=True,
     )
 
     aborted = False
     abort_reason = ""
     running_cost = 0.0
     session_records: list[JudgeRecord] = []
+    since_checkpoint = 0
 
     def task(t: tuple[str, int, str]) -> tuple[tuple[str, int, str], JudgeRecord]:
         qa_id, sid, pmid = t
@@ -367,6 +386,20 @@ def _judge_triples_and_emit(
         abstract = abstract_lookup(pmid)
         rec = judge.classify(sentence, pmid, abstract)
         return t, rec
+
+    def _checkpoint(reason: str) -> None:
+        emit_expanded_qrels(
+            human_qrels_path=human_qrels_path,
+            llm_records=results,
+            out_path=out_path,
+            incomplete=True,
+            abort_reason=reason,
+        )
+        print(
+            f"[{label}] checkpoint: {len(results)}/{len(all_triples)} "
+            f"triples saved ({reason})",
+            flush=True,
+        )
 
     try:
         with ThreadPoolExecutor(max_workers=max(1, max_concurrent)) as ex:
@@ -383,6 +416,10 @@ def _judge_triples_and_emit(
                 results[t] = rec
                 session_records.append(rec)
                 running_cost += rec.cost_usd
+                since_checkpoint += 1
+                if checkpoint_every > 0 and since_checkpoint >= checkpoint_every:
+                    _checkpoint(f"every_{checkpoint_every}")
+                    since_checkpoint = 0
                 if cost_cap is not None and running_cost >= cost_cap:
                     aborted = True
                     abort_reason = f"cost_cap_reached:${cost_cap:.2f}"
@@ -392,6 +429,15 @@ def _judge_triples_and_emit(
     except KeyboardInterrupt:
         aborted = True
         abort_reason = "interrupted"
+    except Exception as exc:  # noqa: BLE001 - protect the partial save
+        # Phase 2.5: a non-quota exception (e.g. retries-exhausted httpx
+        # error) used to leak past `emit_expanded_qrels` and lose every
+        # in-memory result. Now we flush whatever we have and re-raise so
+        # the operator still sees the traceback in the log.
+        aborted = True
+        abort_reason = f"unhandled_exception: {type(exc).__name__}: {exc}"
+        _checkpoint(abort_reason)
+        raise
 
     incomplete = aborted or (len(results) < len(all_triples))
     emit_expanded_qrels(
@@ -433,7 +479,30 @@ def cmd_rejudge(args: argparse.Namespace, *, backend: Backend | None = None) -> 
         max_concurrent=args.max_concurrent, cost_cap=args.cost_cap,
         metadata_run_dir=args.metadata_run_dir,
         label="rejudge",
+        checkpoint_every=getattr(args, "checkpoint_every", 200),
     )
+
+
+_QRELS_DIR = Path("data/qrels")
+_CANONICAL_EXPANDED = _QRELS_DIR / "biogen2025_taskA_qrels_expanded.jsonl"
+
+
+def _default_expanded_out_for_backend(backend_name: str) -> Path:
+    """Phase 2.5: derive the per-backend expanded-qrels filename so a
+    second-backend rejudge does not silently overwrite the canonical
+    mini-cot file. The canonical mini-cot path stays
+    ``biogen2025_taskA_qrels_expanded.jsonl``; every other backend gets
+    ``biogen2025_taskA_qrels_expanded_<backend>.jsonl``.
+
+    Note: `hf-llama` and `together` both serve Llama-3.3-70B (same weights,
+    different hosting routes). They land in *different* files because the
+    rejudge re-classifications are recorded per backend-tag, but the
+    intersection-pool emitter (§2) can treat them as interchangeable
+    sources of the same model.
+    """
+    if backend_name == "openai-mini":
+        return _CANONICAL_EXPANDED
+    return _QRELS_DIR / f"biogen2025_taskA_qrels_expanded_{backend_name}.jsonl"
 
 
 def cmd_expand_pool(args: argparse.Namespace, *, backend: Backend | None = None) -> int:
@@ -441,6 +510,7 @@ def cmd_expand_pool(args: argparse.Namespace, *, backend: Backend | None = None)
     broader expanded pool, decoupling cross-variant comparisons from the
     Phase-1-shaped pool produced by §2.16."""
     judge = Judge(backend or make_backend(args.backend, prompt_mode=args.prompt))
+    out_path = args.out if args.out is not None else _default_expanded_out_for_backend(args.backend)
     answer_lookup = load_answer_sentence_lookup(args.topics)
     abstract_lookup = bm25_abstract_lookup(args.index)
     excluded = human_qrels_keys(args.qrels)
@@ -451,10 +521,11 @@ def cmd_expand_pool(args: argparse.Namespace, *, backend: Backend | None = None)
     return _judge_triples_and_emit(
         judge=judge, all_triples=all_triples,
         answer_lookup=answer_lookup, abstract_lookup=abstract_lookup,
-        out_path=args.out, human_qrels_path=args.qrels,
+        out_path=out_path, human_qrels_path=args.qrels,
         max_concurrent=args.max_concurrent, cost_cap=args.cost_cap,
         metadata_run_dir=args.metadata_run_dir,
         label="expand-pool",
+        checkpoint_every=getattr(args, "checkpoint_every", 200),
     )
 
 
@@ -573,6 +644,11 @@ def _build_parser() -> argparse.ArgumentParser:
                    help="USD spend cap; aborts gracefully when reached.")
     r.add_argument("--max-concurrent", type=int, default=4)
     r.add_argument("--metadata-run-dir", type=Path, default=None)
+    r.add_argument(
+        "--checkpoint-every", type=int, default=200,
+        help="Atomic-write the expanded qrels every N completed triples. "
+             "Set to 0 to disable (single write at end).",
+    )
     r.set_defaults(func=cmd_rejudge)
 
     e = sub.add_parser(
@@ -590,12 +666,22 @@ def _build_parser() -> argparse.ArgumentParser:
     e.add_argument("--topics", type=Path, required=True)
     e.add_argument("--index", type=Path, required=True, help="BM25 index dir.")
     e.add_argument(
-        "--out", type=Path,
-        default=Path("data/qrels/biogen2025_taskA_qrels_expanded.jsonl"),
+        "--out", type=Path, default=None,
+        help=(
+            "Output qrels JSONL. Default: derived from --backend "
+            "(openai-mini → expanded.jsonl; others → expanded_<backend>.jsonl), "
+            "so a second-backend rejudge does not overwrite the canonical file."
+        ),
     )
     e.add_argument("--cost-cap", type=float, default=None)
     e.add_argument("--max-concurrent", type=int, default=4)
     e.add_argument("--metadata-run-dir", type=Path, default=None)
+    e.add_argument(
+        "--checkpoint-every", type=int, default=200,
+        help="Atomic-write the expanded qrels every N completed triples. "
+             "Bounds hibernation / crash data loss to one checkpoint window. "
+             "Set to 0 to disable (single write at end).",
+    )
     e.set_defaults(func=cmd_expand_pool)
 
     c = sub.add_parser(

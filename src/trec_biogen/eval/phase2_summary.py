@@ -33,6 +33,7 @@ from typing import Iterable
 import yaml
 
 from trec_biogen.eval.metrics import DEFAULT_QRELS_PATHS, evaluate
+from trec_biogen.eval.per_topic import per_topic_f1
 from trec_biogen.io.qrels import load_qrels
 
 
@@ -42,6 +43,7 @@ class RunRow:
     run_dir: Path
     official: dict | None
     expanded: dict | None
+    intersection: dict | None
     wall_clock_s: float | None
     vram_peak_gb: float | None
     judge_cost_usd: float | None
@@ -90,6 +92,7 @@ def score_run(
     *,
     official_qrels: Path,
     expanded_qrels: Path | None,
+    intersection_qrels: Path | None = None,
 ) -> RunRow:
     submission = run_dir / "task_a_output.json"
     meta = _maybe_load_yaml(run_dir / "metadata.yaml")
@@ -101,12 +104,17 @@ def score_run(
     if expanded_qrels is not None and expanded_qrels.exists():
         exp_idx = load_qrels(expanded_qrels)
         expanded = evaluate(submission, exp_idx)
+    intersection: dict | None = None
+    if intersection_qrels is not None and intersection_qrels.exists():
+        int_idx = load_qrels(intersection_qrels)
+        intersection = evaluate(submission, int_idx)
 
     return RunRow(
         variant=variant,
         run_dir=run_dir,
         official=official,
         expanded=expanded,
+        intersection=intersection,
         wall_clock_s=meta.get("wall_clock_seconds_total"),
         vram_peak_gb=meta.get("vram_peak_gb_total"),
         judge_cost_usd=meta.get("judge_cost_usd"),
@@ -134,29 +142,145 @@ def _fmt_opt_float(v: float | None, *, suffix: str = "") -> str:
 
 
 def render_markdown(rows: list[RunRow], *, setting: str = "strict") -> str:
+    # Whether to render the intersection-pool column at all.
+    any_intersection = any(r.intersection is not None for r in rows)
+    if any_intersection:
+        header = (
+            "| variant | F1@official Sup / Con | F1@expanded Sup / Con "
+            "| F1@intersection Sup / Con | Δ Sup / Con (official→expanded) "
+            "| wall-clock (s) | VRAM (GiB) | LLM-judge $ |"
+        )
+        sep = "|---|---|---|---|---|---|---|---|"
+    else:
+        header = (
+            "| variant | F1@official Sup / Con | F1@expanded Sup / Con "
+            "| Δ Sup / Con | wall-clock (s) | VRAM (GiB) | LLM-judge $ |"
+        )
+        sep = "|---|---|---|---|---|---|---|"
+
     lines = [
         f"# Phase 2 Dual-Pool Summary ({setting})",
         "",
         "All F1 numbers are sentence-level macro under the published BioGEN "
         "2025 methodology (``unjudged_as_zero=True``). Δ columns show "
-        "official → expanded (positive = pool expansion lifted the F1).",
+        "official → expanded (positive = pool expansion lifted the F1). "
+        + (
+            "The `intersection` pool is the Phase 2.5 two-judge "
+            "intersection-on-contradicts pool (Supports come from the "
+            "canonical mini-cot; Contradicts kept only when mini-cot and "
+            "Together-Llama-70B both label them positive). `n/a` = the "
+            "intersection qrels file is absent."
+            if any_intersection else ""
+        ),
         "",
-        "| variant | F1@official Sup / Con | F1@expanded Sup / Con | Δ Sup / Con | wall-clock (s) | VRAM (GiB) | LLM-judge $ |",
-        "|---|---|---|---|---|---|---|",
+        header,
+        sep,
     ]
     for r in rows:
         off_sup, off_con = _f1_pair(r.official, setting)
         exp_sup, exp_con = _f1_pair(r.expanded, setting)
         d_sup, d_con = _delta(r.official, r.expanded, setting)
-        lines.append(
-            f"| {r.variant} | {off_sup} / {off_con} | {exp_sup} / {exp_con} "
-            f"| {d_sup} / {d_con} | {_fmt_opt_float(r.wall_clock_s)} "
-            f"| {_fmt_opt_float(r.vram_peak_gb)} "
-            f"| {_fmt_opt_float(r.judge_cost_usd, suffix='')} |"
-        )
+        if any_intersection:
+            if r.intersection is not None:
+                int_sup, int_con = _f1_pair(r.intersection, setting)
+            else:
+                int_sup, int_con = "n/a", "n/a"
+            lines.append(
+                f"| {r.variant} | {off_sup} / {off_con} | {exp_sup} / {exp_con} "
+                f"| {int_sup} / {int_con} | {d_sup} / {d_con} "
+                f"| {_fmt_opt_float(r.wall_clock_s)} "
+                f"| {_fmt_opt_float(r.vram_peak_gb)} "
+                f"| {_fmt_opt_float(r.judge_cost_usd, suffix='')} |"
+            )
+        else:
+            lines.append(
+                f"| {r.variant} | {off_sup} / {off_con} | {exp_sup} / {exp_con} "
+                f"| {d_sup} / {d_con} | {_fmt_opt_float(r.wall_clock_s)} "
+                f"| {_fmt_opt_float(r.vram_peak_gb)} "
+                f"| {_fmt_opt_float(r.judge_cost_usd, suffix='')} |"
+            )
     lines.append("")
     lines.append(f"Generated from {len(rows)} run(s) under `runs/`.")
     return "\n".join(lines) + "\n"
+
+
+def _pick_topic_pool(
+    *, official_qrels: Path, expanded_qrels: Path, intersection_qrels: Path,
+) -> tuple[str, Path]:
+    """Pool selection for the by-topic table: prefer the conservative
+    intersection pool, fall back to expanded, then to official."""
+    if intersection_qrels.exists():
+        return "intersection", intersection_qrels
+    if expanded_qrels.exists():
+        return "expanded", expanded_qrels
+    return "official", official_qrels
+
+
+def render_by_topic_table(
+    rows: list[RunRow],
+    *,
+    setting: str,
+    official_qrels: Path,
+    expanded_qrels: Path,
+    intersection_qrels: Path,
+) -> str:
+    """Render a per-topic F1 table with one row per qa_id and one column
+    pair (support / contradict) per variant. Pool source = intersection
+    when present, else expanded, else official.
+    """
+    pool, qrels_path = _pick_topic_pool(
+        official_qrels=official_qrels,
+        expanded_qrels=expanded_qrels,
+        intersection_qrels=intersection_qrels,
+    )
+    # Compute per-topic reports per row.
+    reports = {
+        r.variant: per_topic_f1(r.run_dir, pool=pool, qrels_path=qrels_path)
+        for r in rows
+    }
+    # Union of qa_ids across runs, sorted by integer order when possible.
+    all_qa = set()
+    for rep in reports.values():
+        all_qa.update(rep.topics)
+
+    def _qa_int(q: str) -> int:
+        try:
+            return int(q)
+        except ValueError:
+            return 1 << 31
+
+    sorted_qa = sorted(all_qa, key=lambda q: (_qa_int(q), q))
+
+    variants = [r.variant for r in rows]
+    header = "| qa_id | " + " | ".join(
+        f"{v} Sup / Con" for v in variants
+    ) + " |"
+    sep = "|---|" + "|".join(["---"] * len(variants)) + "|"
+    lines = [
+        f"## Per-topic F1 ({setting}, pool={pool})",
+        "",
+        f"Pool source: `{qrels_path}`. Each cell is the topic's mean "
+        f"per-cell F1; `n` shows cells contributing. Topics absent from a "
+        f"variant's submission render as `—`.",
+        "",
+        header, sep,
+    ]
+    for qa in sorted_qa:
+        cells: list[str] = []
+        for v in variants:
+            tm = reports[v].topics.get(qa)
+            if tm is None:
+                cells.append("— / —")
+                continue
+            s_tm = tm[setting]["support"]
+            c_tm = tm[setting]["contradict"]
+            cells.append(
+                f"{s_tm.F1*100:.2f} (n={s_tm.n_cells}) / "
+                f"{c_tm.F1*100:.2f} (n={c_tm.n_cells})"
+            )
+        lines.append(f"| {qa} | " + " | ".join(cells) + " |")
+    lines.append("")
+    return "\n".join(lines)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -170,11 +294,24 @@ def main(argv: list[str] | None = None) -> int:
         help="Optional: omit or point at a non-existent path to skip the expanded column.",
     )
     p.add_argument(
+        "--intersection-qrels", type=Path,
+        default=DEFAULT_QRELS_PATHS["intersection"],
+        help="Phase 2.5 two-judge intersection-on-contradicts pool. The column "
+             "is hidden in the report when the file is absent — existing Phase 2 "
+             "outputs are not affected.",
+    )
+    p.add_argument(
         "--include", nargs="*", default=None,
         help="Substring filter on run-dir names. Default: every run with task_a_output.json.",
     )
     p.add_argument(
         "--setting", choices=["strict", "relaxed"], default="strict",
+    )
+    p.add_argument(
+        "--by-topic", action="store_true",
+        help="Append a second table with one row per qa_id and columns per "
+             "(variant, pool). Pool source for the topic table is the "
+             "intersection qrels when available, else expanded, else official.",
     )
     p.add_argument(
         "--out", type=Path, default=Path("reports/phase2_summary.md"),
@@ -186,10 +323,24 @@ def main(argv: list[str] | None = None) -> int:
         print(f"no run dirs with task_a_output.json under {args.runs_dir}", file=sys.stderr)
         return 1
     rows = [
-        score_run(d, official_qrels=args.official_qrels, expanded_qrels=args.expanded_qrels)
+        score_run(
+            d,
+            official_qrels=args.official_qrels,
+            expanded_qrels=args.expanded_qrels,
+            intersection_qrels=args.intersection_qrels,
+        )
         for d in run_dirs
     ]
     body = render_markdown(rows, setting=args.setting)
+
+    if args.by_topic:
+        body += "\n" + render_by_topic_table(
+            rows,
+            setting=args.setting,
+            official_qrels=args.official_qrels,
+            expanded_qrels=args.expanded_qrels,
+            intersection_qrels=args.intersection_qrels,
+        )
 
     # Phase 2 §10.4: persistent commentary. If a sibling
     # `<out>_commentary.md` exists, append it verbatim under a separator

@@ -44,6 +44,12 @@ _PRICES: dict[str, tuple[float, float]] = {
     "together-llama-3.3-70b": (0.88, 0.88),
     "openai-gpt-4o-mini":     (0.15, 0.60),
     "openai-gpt-4o":          (2.50, 10.00),
+    # HuggingFace Inference Providers router. Phase 2.5 fallback after the
+    # Together-direct path went 402; HF's router auto-routes Llama-3.3-70B
+    # to Groq (sub-second 70B inference). Pricing is provider-pass-through;
+    # we record Groq's list price for cost accounting and HF may charge a
+    # small markup on top. Treat the displayed $ as ±10% accurate.
+    "hf-llama-3.3-70b":       (0.59, 0.79),
 }
 
 
@@ -210,7 +216,8 @@ class HTTPBackend(Backend):
         return httpx.Client(**kwargs)
 
     def _post_with_retry(self, payload: dict[str, Any]) -> httpx.Response:
-        """POST with retry on transient 429s, timeouts, and network errors.
+        """POST with retry on transient 429s, transient 5xx, timeouts, and
+        network errors.
 
         Distinguishes:
         * HTTP 200 → return.
@@ -218,6 +225,11 @@ class HTTPBackend(Backend):
           :class:`QuotaExhausted` immediately so the rejudge loop can halt
           gracefully and emit a partial expanded-qrels.
         * Plain HTTP 429 → back off (honour ``Retry-After``) and retry.
+        * HTTP 500 / 502 / 503 / 504 → transient upstream issue (provider
+          overloaded, gateway timeout). Back off and retry. Real-world
+          example: Together's serverless 70B endpoints return 503 under
+          load. Phase 2.5 §1.3 hit this and killed the run because we
+          weren't retrying server-class errors.
         * :class:`httpx.TimeoutException` /
           :class:`httpx.TransportError` (DNS, connection-reset, etc.) →
           treat as transient, back off and retry.
@@ -244,6 +256,15 @@ class HTTPBackend(Backend):
                     f"top up the account and re-invoke with the same --out to resume."
                 )
             if resp.status_code == 429 and attempt < self._MAX_RETRIES:
+                retry_after = self._parse_retry_after(resp, default=backoff)
+                time.sleep(min(retry_after, self._MAX_BACKOFF_SEC))
+                backoff = min(backoff * 2, self._MAX_BACKOFF_SEC)
+                continue
+            if resp.status_code in (500, 502, 503, 504) and attempt < self._MAX_RETRIES:
+                # Honour Retry-After when servers send it on a 503; otherwise
+                # use plain exponential back-off. Keep total per-call latency
+                # bounded by _MAX_BACKOFF_SEC so a wedged upstream doesn't
+                # block the whole batch indefinitely.
                 retry_after = self._parse_retry_after(resp, default=backoff)
                 time.sleep(min(retry_after, self._MAX_BACKOFF_SEC))
                 backoff = min(backoff * 2, self._MAX_BACKOFF_SEC)
@@ -333,6 +354,39 @@ class OpenAI4o(HTTPBackend):
         )
 
 
+class HFLlama70B(HTTPBackend):
+    """HuggingFace Inference Providers router → Llama-3.3-70B-Instruct.
+
+    Same model weights as :class:`TogetherLlama70B` (Meta's Llama-3.3-70B);
+    only the hosting route differs. HF auto-routes to whichever provider
+    is healthy (Groq, SambaNova, Hyperbolic, Novita, ...) — overrideable
+    by setting ``HF_PROVIDER`` in the environment to pin one. The §12.4
+    gate validation (κ=0.9112 vs Together-direct, both running the same
+    Llama-3.3-70B) carries over because the weights are identical.
+
+    HF prepaid balance exhaustion surfaces as HTTP 402, which the shared
+    ``_post_with_retry`` already converts into :class:`QuotaExhausted`
+    — the rejudge loop will graceful-halt with a partial expanded-qrels
+    flagged ``incomplete: true``.
+    """
+
+    def __init__(self, *, prompt_mode: PromptMode = "strict") -> None:
+        # Optional provider pin: `:groq`, `:sambanova`, etc. Default
+        # (no suffix) lets HF auto-route — typically Groq, which is the
+        # fastest for 70B-class models.
+        provider = os.environ.get("HF_PROVIDER", "").strip()
+        model = "meta-llama/Llama-3.3-70B-Instruct"
+        if provider:
+            model = f"{model}:{provider}"
+        super().__init__(
+            name="hf-llama-3.3-70b",
+            model=model,
+            base_url="https://router.huggingface.co/v1",
+            api_key_env="HF_TOKEN",
+            prompt_mode=prompt_mode,
+        )
+
+
 class RecordedBackend(Backend):
     """In-memory backend used by the test suite.
 
@@ -376,6 +430,10 @@ BACKEND_REGISTRY: dict[str, type[Backend]] = {
     "together": TogetherLlama70B,
     "openai-mini": OpenAIMini,
     "openai": OpenAI4o,
+    # Phase 2.5: HuggingFace Inference Providers route to Llama-3.3-70B.
+    # Same model weights as `together`; only the hosting / billing route
+    # is different. Use when Together's prepaid balance is unreachable.
+    "hf-llama": HFLlama70B,
 }
 
 

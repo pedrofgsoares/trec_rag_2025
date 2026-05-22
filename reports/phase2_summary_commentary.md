@@ -162,7 +162,8 @@ Putting it all together — including the §10 robustness checks:
 |---|---|---|
 | OpenAI (`gpt-4o-mini`, `gpt-4o`) | $2.30 | §2.15 strict mini + 4o; §2.16 rejudge mini-cot; §2.17 expand-pool; §12.1 records re-run; §12.7 LLM-filtered RM3 |
 | Together.ai (`Llama-3.3-70B-Turbo`) | $0.38 | §12.4 multi-backend gate validation |
-| **Total** | **$2.68** | Plus ~27 h GPU/CPU time across Phase 1 + 5 variants + 4 LLM-judge passes |
+| HuggingFace Inference Providers (Llama-3.3-70B via Groq) | $2.47 | Phase 2.5 §1.3 second-judge rejudge (5398 triples, CoT) |
+| **Total** | **$5.16** | Plus ~27 h GPU/CPU time across Phase 1 + 5 variants + 5 LLM-judge passes |
 
 ## Closing remark
 
@@ -187,6 +188,50 @@ for a paper-grade extension. `scifive_large` ran on 2026-05-22 (~5.3 h
 GPU) and confirms the contradict-path finding: model-swap is a weaker
 lever than removing the NegEx pre-filter (`no_negex` +2.13 pp vs
 `scifive_large` +0.52 pp on the official Contradicts anchor).
+
+## §13 — Phase 2.5 judge-robustness closure
+
+The Phase 2.5 work added a second LLM judge (`Llama-3.3-70B --prompt cot`
+via HuggingFace Inference Providers), a two-judge intersection-pool, a
+third `--qrels-pool=intersection` flag end-to-end, per-topic F1 reporting,
+a mechanical 3-topic qualitative analysis, and bootstrap CIs at the cell
+level on the intersection-pool numbers. Two reports were produced:
+[`reports/judge_intersection_analysis.md`](judge_intersection_analysis.md)
+and [`reports/per_topic_error_analysis.md`](per_topic_error_analysis.md).
+
+The intersection pool is aggressively conservative: 88 % of the Contradicts
+positives in the mini-cot pool are *not* ratified by Llama. The two judges
+agree on Supports (Jaccard ~0.93) but rarely on Contradicts (Jaccard
+~0.12). This isn't noise — it's a calibration asymmetry: small models
+trained on RLHF data are more permissive on contradictions than the
+larger Llama-70B, at the same CoT temperature.
+
+The §11.3 structural Phase 2 finding (no_negex beats Phase 1 on
+Contradicts) **survives the conservative pool**: 3.63 [1.98, 5.38] vs
+1.07 [0.26, 2.04] is directionally clear and 3.4× the midpoint. But
+the original "no_negex >>> starter on Contradicts" reading from the
+expanded pool (12.01 vs 5.34) **does not** survive: 3.63 vs 4.01 sits
+inside the CI overlap. Honest re-reading: on the conservative pool,
+no_negex and starter are statistically indistinguishable on Contradicts,
+and both clearly beat Phase 1. The bootstrap CIs in
+[`reports/judge_intersection_analysis.md`](judge_intersection_analysis.md)
+flag where the cross-variant ordering is signal vs noise.
+
+The three retrieval-side negative results (blind RM3, LLM-filtered RM3,
+LLM rewrites) survive the pool tightening unchanged — their Supports F1
+sits several CIs below the ~16-17 band where every selection-side
+variant clusters.
+
+The per-topic qualitative analysis (qa_ids 150, 120, 131 picked
+mechanically) reveals **three distinct patterns** behind the aggregate
+F1 numbers: pool-expansion gains (qa=150, MedCPT-CE surfaces
+LLM-confirmed-but-pool-invisible PMIDs), trade-offs (qa=120, both
+pipelines converge on the same topical understanding but cite disjoint
+valid evidence), and reranker losses (qa=131, MedCPT-CE demotes
+sub-population-specific human-pool golds on sentences 4-5). The
+aggregate ~0.1 pp difference between Phase 1 and starter on supports
+hides these compositional effects, which the per-topic view makes
+visible.
 
 ### Hardware-budget note (§9.8)
 

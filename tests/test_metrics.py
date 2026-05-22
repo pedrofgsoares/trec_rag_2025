@@ -144,6 +144,40 @@ def test_default_qrels_paths_constant_is_consistent() -> None:
     referenced in the design and reports."""
     assert DEFAULT_QRELS_PATHS["official"].name == "biogen2025_taskA_qrels.jsonl"
     assert DEFAULT_QRELS_PATHS["expanded"].name == "biogen2025_taskA_qrels_expanded.jsonl"
+    # Phase 2.5: intersection pool is the third canonical path.
+    assert DEFAULT_QRELS_PATHS["intersection"].name == "biogen2025_taskA_qrels_intersection.jsonl"
+
+
+def test_source_filter_human_recovers_official_on_intersection_pool(tmp_path: Path) -> None:
+    """Phase 2.5: `--source=human` on the intersection pool MUST also
+    reproduce the official-pool numbers byte-for-byte (the intersection
+    file is a strict superset of the human qrels, so filtering down to
+    human-only positives must equal the human-only file)."""
+    from trec_biogen.judge.intersection import emit_intersection_pool
+
+    human_path = FIXTURES / "mini_qrels.jsonl"
+    expanded_path = FIXTURES / "mini_qrels_expanded.jsonl"
+    # Use the expanded file as both inputs — the intersection is then
+    # the expanded set itself (every contradicts triple agrees with itself).
+    intersection_path = tmp_path / "mini_qrels_intersection.jsonl"
+    emit_intersection_pool(
+        expanded_path, expanded_path,
+        human_qrels_path=human_path, out_path=intersection_path,
+    )
+    human = load_qrels(human_path)
+    intersection = load_qrels(intersection_path)
+    a = evaluate(FIXTURES / "mini_submission.jsonl", human, unjudged_as_zero=False)
+    b = evaluate(
+        FIXTURES / "mini_submission.jsonl", intersection,
+        unjudged_as_zero=False, source="human",
+    )
+    for setting in ("strict", "relaxed"):
+        for cls in ("support", "contradict"):
+            for k in ("P", "R", "F1"):
+                assert abs(a[setting][cls][k] - b[setting][cls][k]) < 1e-9, (
+                    f"{setting}/{cls}/{k} drifted: human-only={a[setting][cls][k]} "
+                    f"vs intersection+source=human={b[setting][cls][k]}"
+                )
 
 
 def test_cli_qrels_pool_resolves_default_path(tmp_path: Path, capsys) -> None:

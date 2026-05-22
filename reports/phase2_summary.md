@@ -1,18 +1,18 @@
 # Phase 2 Dual-Pool Summary (strict)
 
-All F1 numbers are sentence-level macro under the published BioGEN 2025 methodology (``unjudged_as_zero=True``). Δ columns show official → expanded (positive = pool expansion lifted the F1).
+All F1 numbers are sentence-level macro under the published BioGEN 2025 methodology (``unjudged_as_zero=True``). Δ columns show official → expanded (positive = pool expansion lifted the F1). The `intersection` pool is the Phase 2.5 two-judge intersection-on-contradicts pool (Supports come from the canonical mini-cot; Contradicts kept only when mini-cot and Together-Llama-70B both label them positive). `n/a` = the intersection qrels file is absent.
 
-| variant | F1@official Sup / Con | F1@expanded Sup / Con | Δ Sup / Con | wall-clock (s) | VRAM (GiB) | LLM-judge $ |
-|---|---|---|---|---|---|---|
-| phase1_baseline (no phase2_variant) | 5.55 / 0.52 | 16.43 / 12.01 | +10.88 / +11.49 | — | — | — |
-| allow_existing | 5.55 / 0.52 | 16.94 / 12.01 | +11.39 / +11.49 | 0.00 | 0.00 | 0.00 |
-| no_rerank | 6.52 / 0.52 | 15.35 / 11.75 | +8.83 / +11.23 | 700.57 | 2.07 | 0.00 |
-| bm25_rm3 | 3.92 / 0.26 | 8.97 / 5.26 | +5.05 / +5.01 | 5073.13 | 2.07 | 0.00 |
-| bm25_rm3_llm_filtered | 4.03 / 0.52 | 9.89 / 12.01 | +5.86 / +11.49 | 5041.30 | 2.07 | 0.00 |
-| no_negex | 5.55 / 2.65 | 16.33 / 8.06 | +10.78 / +5.42 | 34816.46 | 1.96 | 0.00 |
-| bm25_llm_rewrite | 5.29 / 0.52 | 10.65 / 6.03 | +5.36 / +5.51 | 5258.82 | 2.07 | 0.00 |
-| scifive_large | 5.55 / 1.04 | 16.43 / 5.85 | +10.88 / +4.81 | 18987.70 | 2.02 | 0.00 |
-| starter_baseline_20260514_150718 (no metadata) | 44.34 / 4.21 | 16.55 / 5.34 | -27.79 / +1.13 | — | — | — |
+| variant | F1@official Sup / Con | F1@expanded Sup / Con | F1@intersection Sup / Con | Δ Sup / Con (official→expanded) | wall-clock (s) | VRAM (GiB) | LLM-judge $ |
+|---|---|---|---|---|---|---|---|
+| phase1_baseline (no phase2_variant) | 5.55 / 0.52 | 16.43 / 12.01 | 16.43 / 1.07 | +10.88 / +11.49 | — | — | — |
+| allow_existing | 5.55 / 0.52 | 16.94 / 12.01 | 16.94 / 1.07 | +11.39 / +11.49 | 0.00 | 0.00 | 0.00 |
+| no_rerank | 6.52 / 0.52 | 15.35 / 11.75 | 15.35 / 1.07 | +8.83 / +11.23 | 700.57 | 2.07 | 0.00 |
+| bm25_rm3 | 3.92 / 0.26 | 8.97 / 5.26 | 8.97 / 0.55 | +5.05 / +5.01 | 5073.13 | 2.07 | 0.00 |
+| bm25_rm3_llm_filtered | 4.03 / 0.52 | 9.89 / 12.01 | 9.89 / 1.07 | +5.86 / +11.49 | 5041.30 | 2.07 | 0.00 |
+| no_negex | 5.55 / 2.65 | 16.33 / 8.06 | 16.33 / 3.63 | +10.78 / +5.42 | 34816.46 | 1.96 | 0.00 |
+| bm25_llm_rewrite | 5.29 / 0.52 | 10.65 / 6.03 | 10.65 / 0.81 | +5.36 / +5.51 | 5258.82 | 2.07 | 0.00 |
+| scifive_large | 5.55 / 1.04 | 16.43 / 5.85 | 16.43 / 2.21 | +10.88 / +4.81 | 18987.70 | 2.02 | 0.00 |
+| starter_baseline_20260514_150718 (no metadata) | 44.34 / 4.21 | 16.55 / 5.34 | 16.55 / 4.01 | -27.79 / +1.13 | — | — | — |
 
 Generated from 9 run(s) under `runs/`.
 
@@ -182,7 +182,8 @@ Putting it all together — including the §10 robustness checks:
 |---|---|---|
 | OpenAI (`gpt-4o-mini`, `gpt-4o`) | $2.30 | §2.15 strict mini + 4o; §2.16 rejudge mini-cot; §2.17 expand-pool; §12.1 records re-run; §12.7 LLM-filtered RM3 |
 | Together.ai (`Llama-3.3-70B-Turbo`) | $0.38 | §12.4 multi-backend gate validation |
-| **Total** | **$2.68** | Plus ~27 h GPU/CPU time across Phase 1 + 5 variants + 4 LLM-judge passes |
+| HuggingFace Inference Providers (Llama-3.3-70B via Groq) | $2.47 | Phase 2.5 §1.3 second-judge rejudge (5398 triples, CoT) |
+| **Total** | **$5.16** | Plus ~27 h GPU/CPU time across Phase 1 + 5 variants + 5 LLM-judge passes |
 
 ## Closing remark
 
@@ -207,6 +208,50 @@ for a paper-grade extension. `scifive_large` ran on 2026-05-22 (~5.3 h
 GPU) and confirms the contradict-path finding: model-swap is a weaker
 lever than removing the NegEx pre-filter (`no_negex` +2.13 pp vs
 `scifive_large` +0.52 pp on the official Contradicts anchor).
+
+## §13 — Phase 2.5 judge-robustness closure
+
+The Phase 2.5 work added a second LLM judge (`Llama-3.3-70B --prompt cot`
+via HuggingFace Inference Providers), a two-judge intersection-pool, a
+third `--qrels-pool=intersection` flag end-to-end, per-topic F1 reporting,
+a mechanical 3-topic qualitative analysis, and bootstrap CIs at the cell
+level on the intersection-pool numbers. Two reports were produced:
+[`reports/judge_intersection_analysis.md`](judge_intersection_analysis.md)
+and [`reports/per_topic_error_analysis.md`](per_topic_error_analysis.md).
+
+The intersection pool is aggressively conservative: 88 % of the Contradicts
+positives in the mini-cot pool are *not* ratified by Llama. The two judges
+agree on Supports (Jaccard ~0.93) but rarely on Contradicts (Jaccard
+~0.12). This isn't noise — it's a calibration asymmetry: small models
+trained on RLHF data are more permissive on contradictions than the
+larger Llama-70B, at the same CoT temperature.
+
+The §11.3 structural Phase 2 finding (no_negex beats Phase 1 on
+Contradicts) **survives the conservative pool**: 3.63 [1.98, 5.38] vs
+1.07 [0.26, 2.04] is directionally clear and 3.4× the midpoint. But
+the original "no_negex >>> starter on Contradicts" reading from the
+expanded pool (12.01 vs 5.34) **does not** survive: 3.63 vs 4.01 sits
+inside the CI overlap. Honest re-reading: on the conservative pool,
+no_negex and starter are statistically indistinguishable on Contradicts,
+and both clearly beat Phase 1. The bootstrap CIs in
+[`reports/judge_intersection_analysis.md`](judge_intersection_analysis.md)
+flag where the cross-variant ordering is signal vs noise.
+
+The three retrieval-side negative results (blind RM3, LLM-filtered RM3,
+LLM rewrites) survive the pool tightening unchanged — their Supports F1
+sits several CIs below the ~16-17 band where every selection-side
+variant clusters.
+
+The per-topic qualitative analysis (qa_ids 150, 120, 131 picked
+mechanically) reveals **three distinct patterns** behind the aggregate
+F1 numbers: pool-expansion gains (qa=150, MedCPT-CE surfaces
+LLM-confirmed-but-pool-invisible PMIDs), trade-offs (qa=120, both
+pipelines converge on the same topical understanding but cite disjoint
+valid evidence), and reranker losses (qa=131, MedCPT-CE demotes
+sub-population-specific human-pool golds on sentences 4-5). The
+aggregate ~0.1 pp difference between Phase 1 and starter on supports
+hides these compositional effects, which the per-topic view makes
+visible.
 
 ### Hardware-budget note (§9.8)
 

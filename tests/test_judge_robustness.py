@@ -200,6 +200,59 @@ def test_persistent_429_eventually_raises(monkeypatch: pytest.MonkeyPatch) -> No
         backend.classify("sentence", "non-empty abstract")
 
 
+def test_transient_503_is_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Phase 2.5: a single HTTP 503 (Service Unavailable — Together's 70B
+    endpoint returns this under load) must be retried with backoff, not
+    propagate as a fatal error that kills the rejudge."""
+    calls: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        if len(calls) == 1:
+            return httpx.Response(
+                503,
+                headers={"retry-after": "0"},
+                content=b"Service Unavailable",
+            )
+        return _ok_response()
+
+    backend = _build_backend(httpx.MockTransport(handler), monkeypatch)
+    rec = backend.classify("sentence", "non-empty abstract")
+    assert len(calls) == 2
+    assert rec.label == "Supports"
+
+
+def test_persistent_503_eventually_raises(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A 503 that never recovers must surface — otherwise the caller can't
+    know that the run is stuck on a wedged upstream."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(503, headers={"retry-after": "0"}, content=b"down")
+
+    backend = _build_backend(httpx.MockTransport(handler), monkeypatch)
+    with pytest.raises(httpx.HTTPStatusError):
+        backend.classify("sentence", "non-empty abstract")
+
+
+def test_transient_502_504_500_are_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    """502 Bad Gateway, 504 Gateway Timeout, and 500 Internal Server Error
+    are all upstream-transient classes that warrant a retry — same policy
+    as 503."""
+    for code in (500, 502, 504):
+        calls: list[int] = []
+
+        def handler(request: httpx.Request, _code: int = code) -> httpx.Response:
+            calls.append(1)
+            if len(calls) == 1:
+                return httpx.Response(_code, headers={"retry-after": "0"}, content=b"")
+            return _ok_response()
+
+        backend = _build_backend(httpx.MockTransport(handler), monkeypatch)
+        rec = backend.classify("sentence", "non-empty abstract")
+        assert len(calls) == 2, f"code={code} should have been retried once"
+        assert rec.label == "Supports"
+
+
 # ---------------------------------------------------------------------------
 # 3. resume mode
 # ---------------------------------------------------------------------------
