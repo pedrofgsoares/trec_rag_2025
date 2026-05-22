@@ -53,7 +53,21 @@ def phase1_pass(report: dict) -> Phase1Verdict:
     )
 
 
-def render_markdown(*, report_2025: dict, report_2024: dict | None, run_label: str) -> str:
+def render_markdown(
+    *,
+    report_2025: dict,
+    report_2024: dict | None,
+    run_label: str,
+    report_expanded: dict | None = None,
+) -> str:
+    """Render the run leaderboard.
+
+    ``report_expanded``: optional metrics from the same submission scored
+    against the Phase 2 expanded qrels pool. When provided, an additional
+    "Dual-pool comparison (Phase 2)" section pairs official vs expanded
+    F1 with a delta column. Task: Phase 2 §3.5.
+    """
+
     def fmt(v: float | None) -> str:
         return "—" if v is None else f"{v:.2f}"
 
@@ -93,6 +107,24 @@ def render_markdown(*, report_2025: dict, report_2024: dict | None, run_label: s
                 f"{fmt(report_2024[setting]['contradict']['F1']*100)} |"
             )
 
+    if report_expanded is not None:
+        lines.append("\n## Dual-pool comparison (Phase 2)\n")
+        lines.append(
+            "Official pool = published `biogen2025_taskA_qrels.jsonl` (§6.5 "
+            "anchor). Expanded pool = LLM-judge augmented qrels from Phase 2 "
+            "§2.16. Δ columns are positive when the expanded pool credits picks "
+            "that the official pool penalised as false positives.\n"
+        )
+        lines.append("| Setting | Class | Official F1 | Expanded F1 | Δ |")
+        lines.append("|---|---|---:|---:|---:|")
+        for setting in ("strict", "relaxed"):
+            for cls in ("support", "contradict"):
+                off = report_2025[setting][cls]["F1"] * 100
+                exp = report_expanded[setting][cls]["F1"] * 100
+                lines.append(
+                    f"| {setting} | {cls} | {fmt(off)} | {fmt(exp)} | {exp - off:+.2f} |"
+                )
+
     verdict = phase1_pass(report_2025)
     flag = "PASS" if verdict.passed else "FAIL"
     lines.append("\n## Phase-1 gate\n")
@@ -110,9 +142,15 @@ def write_report(
     report_2024_json: Path | None,
     out_md: Path,
     run_label: str,
+    report_expanded_json: Path | None = None,
 ) -> Path:
     r25 = json.loads(Path(report_2025_json).read_text())
     r24 = json.loads(Path(report_2024_json).read_text()) if report_2024_json else None
+    re = json.loads(Path(report_expanded_json).read_text()) if report_expanded_json else None
     out_md.parent.mkdir(parents=True, exist_ok=True)
-    out_md.write_text(render_markdown(report_2025=r25, report_2024=r24, run_label=run_label))
+    out_md.write_text(
+        render_markdown(
+            report_2025=r25, report_2024=r24, run_label=run_label, report_expanded=re,
+        )
+    )
     return out_md

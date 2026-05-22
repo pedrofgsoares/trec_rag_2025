@@ -1,0 +1,17 @@
+# @package _global_
+# Phase 2 §6 — allow_existing variant.
+# Relax the internal selection rule that drops PMIDs already in
+# ``existing_supported_citations``. The official validator still enforces
+# the track rule downstream, so this only changes what the pipeline
+# considers in its own deduplication. Cheap (< 1 h on real input).
+defaults:
+  - phase1_baseline
+  - _self_
+
+phase2_variant: allow_existing
+
+run:
+  label: phase2_allow_existing
+
+selection:
+  exclude_existing: false

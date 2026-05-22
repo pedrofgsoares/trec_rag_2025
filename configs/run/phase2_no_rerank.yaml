@@ -1,0 +1,18 @@
+# @package _global_
+# Phase 2 §4 — no_rerank variant.
+# Skip the MedCPT-CE forward pass and feed BM25 top-30 straight into the
+# DeBERTa support NLI. Cheap (~1 h on real input); design expectation is a
+# ≥ 30 pp lift on official-pool support F1 because the rerank step itself
+# was the main pool-bias amplifier in Phase 1.
+defaults:
+  - phase1_baseline
+  - _self_
+
+phase2_variant: no_rerank
+
+run:
+  label: phase2_no_rerank
+
+# Disable the rerank phase. ``run_task_a.py`` falls back to
+# ``passthrough_rerank`` when this evaluates to None.
+rerank: null

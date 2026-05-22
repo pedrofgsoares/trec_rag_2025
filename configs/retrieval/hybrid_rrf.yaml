@@ -1,0 +1,13 @@
+# Phase 2 §9.5 — hybrid BM25 + Dense retrieval fused via RRF.
+# Selected via ``flavour: hybrid_rrf`` in run_task_a.py orchestrator.
+flavour: hybrid_rrf
+k1: 0.9
+b: 0.4
+support_k: 100         # fused depth for the support path (matches phase1_baseline)
+contradict_k: 1000     # fused depth for the contradict path
+dense:
+  index_dir: data/indexes/medcpt_5m
+  query_model: ncbi/MedCPT-Query-Encoder
+  k_leg: null          # per-leg retrieval depth before fusion; null = match contradict_k
+rrf:
+  k: 60                # Cormack et al. smoothing constant

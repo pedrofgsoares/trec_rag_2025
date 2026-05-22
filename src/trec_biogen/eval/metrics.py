@@ -42,12 +42,21 @@ from typing import Literal
 
 import orjson
 
-from trec_biogen.io.qrels import QrelsIndex, load_qrels
+from trec_biogen.io.qrels import QrelsIndex, Source, load_qrels
 
 Class = Literal["support", "contradict"]
 Setting = Literal["strict", "relaxed"]
 _CLASSES: tuple[Class, ...] = ("support", "contradict")
 _SETTINGS: tuple[Setting, ...] = ("strict", "relaxed")
+
+# Default qrels path per pool. ``--qrels-pool`` is a sugar that fills
+# ``--qrels`` when the latter is omitted, so the eval CLI can be invoked
+# without remembering the file name. ``--qrels`` always wins if passed
+# explicitly.
+DEFAULT_QRELS_PATHS: dict[str, Path] = {
+    "official": Path("data/qrels/biogen2025_taskA_qrels.jsonl"),
+    "expanded": Path("data/qrels/biogen2025_taskA_qrels_expanded.jsonl"),
+}
 
 
 @dataclass(slots=True)
@@ -131,6 +140,7 @@ def evaluate(
     *,
     level: Literal["sentence", "question"] = "sentence",
     unjudged_as_zero: bool | None = None,
+    source: Source = "any",
 ) -> dict[str, dict[str, dict[str, float]]]:
     """Return {setting: {class: {P,R,F1}}} macro-averaged across judged cells.
 
@@ -152,7 +162,7 @@ def evaluate(
 
     if level == "question":
         return _evaluate_question_level(
-            submission_path, qrels, unjudged_as_zero=unjudged_as_zero
+            submission_path, qrels, unjudged_as_zero=unjudged_as_zero, source=source,
         )
 
     per_cell: dict[Setting, dict[Class, list[PRF]]] = {
@@ -160,7 +170,7 @@ def evaluate(
     }
     for qa_id, sid, cls, predicted in _iter_submission_cells(submission_path):
         for setting in _SETTINGS:
-            positives = qrels.positives(qa_id, sid, cls, setting=setting)
+            positives = qrels.positives(qa_id, sid, cls, setting=setting, source=source)
             res = _prf(predicted, positives, unjudged_as_zero=unjudged_as_zero)
             if res is not None:
                 per_cell[setting][cls].append(res)
@@ -168,7 +178,11 @@ def evaluate(
 
 
 def _evaluate_question_level(
-    submission_path: Path, qrels: QrelsIndex, *, unjudged_as_zero: bool = False,
+    submission_path: Path,
+    qrels: QrelsIndex,
+    *,
+    unjudged_as_zero: bool = False,
+    source: Source = "any",
 ) -> dict[str, dict[str, dict[str, float]]]:
     # Union predictions per (qa_id, class) across sentences.
     by_qa: dict[tuple[str, Class], set[str]] = {}
@@ -181,7 +195,7 @@ def _evaluate_question_level(
     }
     for (qa_id, cls), predicted in by_qa.items():
         for setting in _SETTINGS:
-            positives = qrels.question_positives(qa_id, cls, setting=setting)
+            positives = qrels.question_positives(qa_id, cls, setting=setting, source=source)
             res = _prf(predicted, positives, unjudged_as_zero=unjudged_as_zero)
             if res is not None:
                 per_cell[setting][cls].append(res)
@@ -212,7 +226,27 @@ def _macro_average(
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser()
     p.add_argument("--submission", required=True, type=Path)
-    p.add_argument("--qrels", required=True, type=Path)
+    p.add_argument(
+        "--qrels", type=Path, default=None,
+        help="Explicit qrels JSONL path. Overrides --qrels-pool when set.",
+    )
+    p.add_argument(
+        "--qrels-pool",
+        choices=sorted(DEFAULT_QRELS_PATHS),
+        default="official",
+        help="Convenience: pick the canonical qrels file for the given pool. "
+             "'official' = data/qrels/biogen2025_taskA_qrels.jsonl. "
+             "'expanded' = data/qrels/biogen2025_taskA_qrels_expanded.jsonl. "
+             "Ignored when --qrels is set.",
+    )
+    p.add_argument(
+        "--source", choices=["human", "llm", "any"], default="any",
+        help="Filter qrels positives by source attribution. Default 'any' "
+             "unions human + LLM judgements. 'human' restricts to the "
+             "official-pool subset for §6.5 reproducibility (works on the "
+             "expanded file too — it filters out LLM rows). 'llm' isolates "
+             "the LLM-only contribution.",
+    )
     p.add_argument("--out", type=Path, help="Optional JSON output path")
     p.add_argument(
         "--level",
@@ -222,8 +256,9 @@ def main(argv: list[str] | None = None) -> int:
     )
     a = p.parse_args(argv)
 
-    qrels = load_qrels(a.qrels)
-    report = evaluate(a.submission, qrels, level=a.level)
+    qrels_path = a.qrels if a.qrels is not None else DEFAULT_QRELS_PATHS[a.qrels_pool]
+    qrels = load_qrels(qrels_path)
+    report = evaluate(a.submission, qrels, level=a.level, source=a.source)
     text = json.dumps(report, indent=2)
     print(text)
     if a.out:

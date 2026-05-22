@@ -1,0 +1,25 @@
+# Phase 2 §12.7 — BM25 + LLM-filtered RM3.
+# Per (qa_id, sentence_id) cell: BM25 top-K → LLM binary 'relevant?'
+# → manual RM3 over accepted docs only → BM25 with expanded query.
+# Addresses the §7.4 negative finding that blind RM3 hurts on
+# biomedical evidence retrieval; the LLM filter removes the
+# topically-related-but-not-evidence-bearing docs that drive RM3 drift.
+flavour: bm25_rm3_llm_filtered
+k1: 0.9
+b: 0.4
+support_k: 100
+contradict_k: 1000
+llm_prf:
+  backend: openai-mini       # binary classification — minimal cost
+  prompt: strict             # CoT not needed for binary relevance
+  initial_k: 30              # BM25 depth at which we apply the LLM filter
+  fb_terms: 10               # # of RM1 expansion terms appended to query
+  max_concurrent: 2          # near-sequential after 429 cooldown issues
+  # Apply the LLM filter only to the support path. The contradict path
+  # already has NegEx + sentence-level DeBERTa NLI as strong filters,
+  # the marginal benefit of LLM-filtered RM3 there is small, and the
+  # path's volume (~5820 candidates at k=1000) hits OpenAI tier-1 RPM
+  # limits during the work window. Pragmatic compromise; the support
+  # path is what §7.4's negative RM3 result was about anyway.
+  apply_to_support: true
+  apply_to_contradict: false

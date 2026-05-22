@@ -7,7 +7,14 @@ support:
   max_len: 512
 
 contradict:
+  # ``type`` selects the NLI head used by run_task_a.py (Phase 2 §7).
+  # ``deberta`` = 3-way sequence-classification on the DeBERTa MNLI head.
+  # ``t5`` = seq2seq constrained decoding (SciFive-large variant).
+  type: deberta
   model: ./models/deberta-v3-base-mnli
   batch_size: 16
   max_len: 512
   audit_sample: 50  # NegEx-drop audit per task 8.6
+  # Phase 2 §5: set to false to skip the NegEx + cue-list pre-filter and
+  # run the contradict NLI over every segmented sentence (no_negex variant).
+  negex: true

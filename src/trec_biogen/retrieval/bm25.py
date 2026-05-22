@@ -32,6 +32,10 @@ class BM25Index:
     ----------
     index_dir : path to a directory built by ``scripts/build_indexes.sh``.
     k1, b : BM25 parameters; defaults match Anserini's PubMed presets.
+    rm3_fb_terms, rm3_fb_docs, rm3_original_query_weight :
+        RM3 pseudo-relevance feedback parameters (Phase 2 §8). Defaults
+        track Pyserini / Anserini conventions; only consulted when
+        ``search(..., rm3=True)`` is invoked.
     """
 
     def __init__(
@@ -40,6 +44,9 @@ class BM25Index:
         *,
         k1: float = 0.9,
         b: float = 0.4,
+        rm3_fb_terms: int = 10,
+        rm3_fb_docs: int = 10,
+        rm3_original_query_weight: float = 0.5,
     ) -> None:
         from pyserini.search.lucene import LuceneSearcher  # local import: heavy JVM
 
@@ -48,9 +55,37 @@ class BM25Index:
             raise FileNotFoundError(f"index not found: {self.index_dir}")
         self._searcher: LuceneSearcher = LuceneSearcher(str(self.index_dir))
         self._searcher.set_bm25(k1=k1, b=b)
+        self._rm3_params = (rm3_fb_terms, rm3_fb_docs, rm3_original_query_weight)
+        self._rm3_active = False
 
-    def search(self, query: str, k: int) -> list[Hit]:
-        """Run BM25, return up to ``k`` hits sorted by descending score."""
+    def _set_rm3(self, enabled: bool) -> None:
+        """Toggle RM3 mode on the underlying searcher.
+
+        No-op when the requested state already matches the current one,
+        so back-to-back ``search`` calls with the same ``rm3=`` value
+        avoid the per-call set_rm3/unset_rm3 round-trip.
+        """
+        if enabled == self._rm3_active:
+            return
+        if enabled:
+            fb_terms, fb_docs, orig_w = self._rm3_params
+            self._searcher.set_rm3(
+                fb_terms=fb_terms,
+                fb_docs=fb_docs,
+                original_query_weight=orig_w,
+            )
+        else:
+            self._searcher.unset_rm3()
+        self._rm3_active = enabled
+
+    def search(self, query: str, k: int, *, rm3: bool = False) -> list[Hit]:
+        """Run BM25, return up to ``k`` hits sorted by descending score.
+
+        ``rm3=True`` enables Pyserini RM3 pseudo-relevance feedback for
+        this call (and subsequent calls until a ``rm3=False`` call
+        flips it back off).
+        """
+        self._set_rm3(rm3)
         raw = self._searcher.search(query, k=k)
         return [Hit(pmid=h.docid, rank=i + 1, score=h.score) for i, h in enumerate(raw)]
 

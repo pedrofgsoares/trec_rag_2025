@@ -37,6 +37,9 @@ dependencies = [
 
     # Preflight
     "psutil==6.1.1",
+
+    # LLM-judge HTTP client (Phase 2 §2; OpenAI + Together.ai chat completions)
+    "httpx==0.28.1",
 ]
 
 [project.optional-dependencies]

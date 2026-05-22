@@ -1,0 +1,15 @@
+# @package _global_
+# Phase 2 §8 — BM25 + RM3 query expansion (variant 4a).
+# Pyserini-native pseudo-relevance feedback on top of the same BM25 index.
+# Cheap: only the retrieval phase changes — rerank, NLI, and selection
+# are inherited from phase1_baseline. Combine with --reuse-from is NOT
+# useful here because retrieval is exactly what we're varying.
+defaults:
+  - phase1_baseline
+  - override /retrieval: bm25_rm3
+  - _self_
+
+phase2_variant: bm25_rm3
+
+run:
+  label: phase2_bm25_rm3

@@ -1,0 +1,13 @@
+# Phase 2 §8 — BM25 with RM3 pseudo-relevance feedback query expansion.
+# Defaults match Pyserini's MS MARCO / TREC presets and the Anserini paper.
+# The flag is read by ``run_task_a.py`` and forwarded through
+# ``phases.retrieve(..., rm3=True)`` into ``BM25Index.search``.
+k1: 0.9
+b: 0.4
+support_k: 100
+contradict_k: 1000
+rm3:
+  enabled: true
+  fb_terms: 10                  # # feedback terms to add to the query
+  fb_docs: 10                   # # top docs to treat as pseudo-relevant
+  original_query_weight: 0.5    # interpolation with the rewritten query

@@ -1,0 +1,16 @@
+# @package _global_
+# Phase 2 §12.7 — LLM-filtered RM3 variant.
+# Endereça directamente o negative finding de §7.4 (blind RM3 hurts).
+# The LLM removes topically-related-but-not-evidence-bearing docs
+# from the pseudo-relevant set before RM3 expansion, so the expansion
+# terms come from genuinely on-claim documents instead of generic
+# disease-area literature.
+defaults:
+  - phase1_baseline
+  - override /retrieval: bm25_rm3_llm_filtered
+  - _self_
+
+phase2_variant: bm25_rm3_llm_filtered
+
+run:
+  label: phase2_bm25_rm3_llm_filtered

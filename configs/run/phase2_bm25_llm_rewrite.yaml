@@ -1,0 +1,14 @@
+# @package _global_
+# Phase 2 §12.10 — BM25 over LLM-rewritten query variants.
+# Third query-side intervention after §7.4 (blind RM3 — negative) and
+# §12.7 (LLM-filtered RM3 — partial recovery). This one rewrites the
+# claim into multiple PubMed-style queries; fuses via RRF.
+defaults:
+  - phase1_baseline
+  - override /retrieval: bm25_llm_rewrite
+  - _self_
+
+phase2_variant: bm25_llm_rewrite
+
+run:
+  label: phase2_bm25_llm_rewrite

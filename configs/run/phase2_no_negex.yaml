@@ -1,0 +1,19 @@
+# @package _global_
+# Phase 2 §5 — no_negex variant.
+# Skip the NegEx + cue-list pre-filter on the contradict path. The DeBERTa
+# contradict NLI then runs over every segmented abstract sentence (~1.9M
+# pairs vs ~83k in Phase 1) — overnight job, ~10–12 h on the local GPU.
+# Combine with ``--reuse-from=<phase1_run>`` to skip retrieval +
+# segmentation.
+defaults:
+  - phase1_baseline
+  - _self_
+
+phase2_variant: no_negex
+
+run:
+  label: phase2_no_negex
+
+nli:
+  contradict:
+    negex: false

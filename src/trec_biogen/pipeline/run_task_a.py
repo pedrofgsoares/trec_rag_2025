@@ -35,11 +35,15 @@ from trec_biogen.io.qrels import load_qrels
 from trec_biogen.io.submission import validate_official, write_official_submission
 from trec_biogen.io.topics import load_topics
 from trec_biogen.nli.negation import filter_negated
-from trec_biogen.nli.stance import score_contradict_pairs, score_support
+from trec_biogen.nli.stance import (
+    score_contradict_pairs,
+    score_contradict_pairs_t5,
+    score_support,
+)
 from trec_biogen.pipeline import metadata, phases, preflight
 from trec_biogen.pipeline.model_utils import unload
 from trec_biogen.pipeline.selection import SelectionConfig, select
-from trec_biogen.rerank.cross_encoder import rerank_support
+from trec_biogen.rerank.cross_encoder import passthrough_rerank, rerank_support
 from trec_biogen.retrieval.bm25 import BM25Index
 
 
@@ -144,39 +148,203 @@ def main(cfg: DictConfig) -> None:
     # Phase 2 per-phase timing + VRAM accumulator.
     phase_results: dict[str, Any] = {}
 
+    # Phase 2 §8: RM3 params (when the retrieval config opts in).
+    rm3_cfg = cfg.retrieval.get("rm3") if hasattr(cfg.retrieval, "get") else None
+    rm3_enabled = bool(rm3_cfg and rm3_cfg.get("enabled", False))
     bm = BM25Index(
         repo / cfg.paths.index_dir,
         k1=cfg.retrieval.k1,
         b=cfg.retrieval.b,
+        rm3_fb_terms=int(rm3_cfg.get("fb_terms", 10)) if rm3_cfg else 10,
+        rm3_fb_docs=int(rm3_cfg.get("fb_docs", 10)) if rm3_cfg else 10,
+        rm3_original_query_weight=float(
+            rm3_cfg.get("original_query_weight", 0.5)
+        ) if rm3_cfg else 0.5,
     )
     topics = load_topics(repo / cfg.paths.topics)
 
     try:
-        logger.info("phase 1: BM25 k=100 (support)")
-        with metadata.phase_timer("retrieve_support", phase_results):
-            retrieval_sup = _maybe_run(
-                run_dir / "retrieval_support.parquet",
-                phases.retrieve, topics, bm,
-                k=cfg.retrieval.support_k, _logger=logger,
-            )
-        logger.info("phase 1': BM25 k=1000 (contradict)")
-        with metadata.phase_timer("retrieve_contradict", phase_results):
-            retrieval_con = _maybe_run(
-                run_dir / "retrieval_contradict.parquet",
-                phases.retrieve, topics, bm,
-                k=cfg.retrieval.contradict_k, _logger=logger,
-            )
+        # Phase 2 §9.6 / §12.7: dispatch on retrieval flavour.
+        #   bm25                 — plain BM25, optionally + RM3
+        #   hybrid_rrf           — BM25 + dense MedCPT FAISS, fused via RRF
+        #   bm25_rm3_llm_filtered — BM25 → LLM relevance filter → manual RM3
+        flavour = cfg.retrieval.get("flavour", "bm25")
+        dense_index = None
+        if flavour == "bm25_llm_rewrite":
+            from trec_biogen.judge.backends import make_backend, HTTPBackend
+            from trec_biogen.retrieval.llm_rewrite import LLMQueryRewriter
 
-        logger.info("phase 2: MedCPT-CE rerank (support)")
-        with metadata.phase_timer("rerank_support", phase_results):
-            rerank_sup = _maybe_run(
-                run_dir / "rerank_support.parquet",
-                rerank_support, retrieval_sup, bm,
-                model_name=cfg.rerank.model,
-                batch_size=cfg.rerank.batch_size,
-                top_k=cfg.rerank.top_k, _logger=logger,
+            rw_cfg = cfg.retrieval.llm_rewrite
+            backend = make_backend(
+                rw_cfg.backend, prompt_mode=rw_cfg.get("prompt", "strict"),
             )
-        unload()  # release MedCPT-CE before DeBERTa loads
+            if not isinstance(backend, HTTPBackend):
+                raise TypeError(
+                    f"llm_rewrite backend must be HTTPBackend, got {type(backend).__name__}"
+                )
+            rewriter = LLMQueryRewriter(
+                backend,
+                n_variants=int(rw_cfg.get("n_variants", 3)),
+                max_concurrent=int(rw_cfg.get("max_concurrent", 4)),
+                prompt_mode=str(rw_cfg.get("prompt", "cot")),
+            )
+            include_orig = bool(rw_cfg.get("include_original", True))
+            rrf_k = int(cfg.retrieval.rrf.k)
+            logger.info(
+                f"phase 1: BM25 over LLM-rewritten queries (backend={rw_cfg.backend}, "
+                f"prompt={rewriter._prompt_mode}, n_variants={rewriter._n_variants}, "
+                f"include_original={include_orig}, rrf_k={rrf_k})"
+            )
+            with metadata.phase_timer("retrieve_support", phase_results):
+                retrieval_sup = _maybe_run(
+                    run_dir / "retrieval_support.parquet",
+                    phases.retrieve_llm_rewrite, topics, bm, rewriter,
+                    k=cfg.retrieval.support_k, rrf_k=rrf_k,
+                    include_original=include_orig, _logger=logger,
+                )
+            logger.info("phase 1': BM25 over LLM-rewritten queries (contradict)")
+            with metadata.phase_timer("retrieve_contradict", phase_results):
+                retrieval_con = _maybe_run(
+                    run_dir / "retrieval_contradict.parquet",
+                    phases.retrieve_llm_rewrite, topics, bm, rewriter,
+                    k=cfg.retrieval.contradict_k, rrf_k=rrf_k,
+                    include_original=include_orig, _logger=logger,
+                )
+            logger.info(
+                f"[llm_rewrite] total cost: ${rewriter.stats['cost_usd']:.4f} "
+                f"over {rewriter.stats['calls']} calls"
+            )
+        elif flavour == "bm25_rm3_llm_filtered":
+            from trec_biogen.judge.backends import make_backend, HTTPBackend
+            from trec_biogen.retrieval.llm_prf import LLMRelevanceFilter
+
+            prf_cfg = cfg.retrieval.llm_prf
+            backend = make_backend(
+                prf_cfg.backend, prompt_mode=prf_cfg.get("prompt", "strict"),
+            )
+            if not isinstance(backend, HTTPBackend):
+                raise TypeError(
+                    f"llm_prf backend must be HTTPBackend, got {type(backend).__name__}"
+                )
+            llm_filter = LLMRelevanceFilter(
+                backend, max_concurrent=int(prf_cfg.get("max_concurrent", 8)),
+            )
+            initial_k = int(prf_cfg.get("initial_k", 30))
+            fb_terms = int(prf_cfg.get("fb_terms", 10))
+            apply_sup = bool(prf_cfg.get("apply_to_support", True))
+            apply_con = bool(prf_cfg.get("apply_to_contradict", True))
+
+            if apply_sup:
+                logger.info(
+                    f"phase 1: BM25 + LLM-filtered RM3 (support) "
+                    f"backend={prf_cfg.backend} initial_k={initial_k} fb_terms={fb_terms}"
+                )
+                with metadata.phase_timer("retrieve_support", phase_results):
+                    retrieval_sup = _maybe_run(
+                        run_dir / "retrieval_support.parquet",
+                        phases.retrieve_llm_filtered_rm3, topics, bm, llm_filter,
+                        k=cfg.retrieval.support_k,
+                        initial_k=initial_k, fb_terms=fb_terms, _logger=logger,
+                    )
+            else:
+                logger.info("phase 1: BM25 (support) — LLM filter disabled for this path")
+                with metadata.phase_timer("retrieve_support", phase_results):
+                    retrieval_sup = _maybe_run(
+                        run_dir / "retrieval_support.parquet",
+                        phases.retrieve, topics, bm,
+                        k=cfg.retrieval.support_k, _logger=logger,
+                    )
+            if apply_con:
+                logger.info("phase 1': BM25 + LLM-filtered RM3 (contradict)")
+                with metadata.phase_timer("retrieve_contradict", phase_results):
+                    retrieval_con = _maybe_run(
+                        run_dir / "retrieval_contradict.parquet",
+                        phases.retrieve_llm_filtered_rm3, topics, bm, llm_filter,
+                        k=cfg.retrieval.contradict_k,
+                        initial_k=initial_k, fb_terms=fb_terms, _logger=logger,
+                    )
+            else:
+                logger.info("phase 1': BM25 (contradict) — LLM filter disabled for this path")
+                with metadata.phase_timer("retrieve_contradict", phase_results):
+                    retrieval_con = _maybe_run(
+                        run_dir / "retrieval_contradict.parquet",
+                        phases.retrieve, topics, bm,
+                        k=cfg.retrieval.contradict_k, _logger=logger,
+                    )
+            logger.info(
+                f"[llm_prf] total filter cost: ${llm_filter.stats['cost_usd']:.4f} "
+                f"over {llm_filter.stats['calls']} calls"
+            )
+        elif flavour == "hybrid_rrf":
+            from trec_biogen.retrieval.dense import DenseIndex
+
+            dense_cfg = cfg.retrieval.dense
+            dense_index = DenseIndex(
+                repo / dense_cfg.index_dir,
+                query_model=dense_cfg.query_model,
+            )
+            rrf_k = int(cfg.retrieval.rrf.k)
+            leg_k = dense_cfg.get("k_leg")
+            logger.info(
+                f"phase 1: hybrid retrieval (BM25 + Dense MedCPT, RRF k={rrf_k})"
+            )
+            with metadata.phase_timer("retrieve_support", phase_results):
+                retrieval_sup = _maybe_run(
+                    run_dir / "retrieval_support.parquet",
+                    phases.retrieve_hybrid, topics, bm, dense_index,
+                    k=cfg.retrieval.support_k, rrf_k=rrf_k, leg_k=leg_k,
+                    _logger=logger,
+                )
+            logger.info(
+                f"phase 1': hybrid retrieval (BM25 + Dense MedCPT, RRF k={rrf_k})"
+            )
+            with metadata.phase_timer("retrieve_contradict", phase_results):
+                retrieval_con = _maybe_run(
+                    run_dir / "retrieval_contradict.parquet",
+                    phases.retrieve_hybrid, topics, bm, dense_index,
+                    k=cfg.retrieval.contradict_k, rrf_k=rrf_k, leg_k=leg_k,
+                    _logger=logger,
+                )
+        else:
+            rm3_note = " (RM3 enabled)" if rm3_enabled else ""
+            logger.info(f"phase 1: BM25 k=100 (support){rm3_note}")
+            with metadata.phase_timer("retrieve_support", phase_results):
+                retrieval_sup = _maybe_run(
+                    run_dir / "retrieval_support.parquet",
+                    phases.retrieve, topics, bm,
+                    k=cfg.retrieval.support_k, rm3=rm3_enabled, _logger=logger,
+                )
+            logger.info(f"phase 1': BM25 k=1000 (contradict){rm3_note}")
+            with metadata.phase_timer("retrieve_contradict", phase_results):
+                retrieval_con = _maybe_run(
+                    run_dir / "retrieval_contradict.parquet",
+                    phases.retrieve, topics, bm,
+                    k=cfg.retrieval.contradict_k, rm3=rm3_enabled, _logger=logger,
+                )
+
+        # Phase 2 §4: ``rerank: null`` disables the MedCPT-CE forward pass
+        # and falls through to a passthrough that keeps the BM25 top-K in
+        # the same parquet shape ``score_support`` expects.
+        rerank_cfg = cfg.get("rerank") if hasattr(cfg, "get") else cfg.rerank
+        if rerank_cfg is None:
+            logger.info("phase 2: rerank disabled (passthrough BM25 top-K)")
+            with metadata.phase_timer("rerank_support", phase_results):
+                rerank_sup = _maybe_run(
+                    run_dir / "rerank_support.parquet",
+                    passthrough_rerank, retrieval_sup,
+                    top_k=30, _logger=logger,
+                )
+        else:
+            logger.info("phase 2: MedCPT-CE rerank (support)")
+            with metadata.phase_timer("rerank_support", phase_results):
+                rerank_sup = _maybe_run(
+                    run_dir / "rerank_support.parquet",
+                    rerank_support, retrieval_sup, bm,
+                    model_name=cfg.rerank.model,
+                    batch_size=cfg.rerank.batch_size,
+                    top_k=cfg.rerank.top_k, _logger=logger,
+                )
+        unload()  # release MedCPT-CE before DeBERTa loads (no-op if passthrough)
 
         logger.info("phase 3: DeBERTa-MNLI entailment (support)")
         with metadata.phase_timer("nli_support", phase_results):
@@ -194,21 +362,31 @@ def main(cfg: DictConfig) -> None:
                 phases.segment_abstracts, retrieval_con, bm,
                 _logger=logger,
             )
-        logger.info("phase 3'': NegEx + cue-list filter")
-        negex_out = run_dir / "negex_contradict.parquet"
-        with metadata.phase_timer("negex_filter", phase_results):
-            if negex_out.exists() and negex_out.stat().st_size > 0:
-                logger.info(f"reusing existing {negex_out.name}")
-            else:
-                counts = filter_negated(
-                    seg,
-                    out_parquet=negex_out,
-                    audit_jsonl=run_dir / "negation_audit.jsonl",
-                    audit_sample=cfg.nli.contradict.audit_sample,
-                )
-                logger.info(f"negex counts: {counts}")
+        # Phase 2 §5: when ``nli.contradict.negex`` is false, skip the
+        # NegEx + cue-list pre-filter and use the segmented sentences
+        # directly. The contradict NLI step then runs over ~23× more
+        # pairs (~1.9M vs ~83k in Phase 1 on the same input) — overnight
+        # job. Schemas match (verified empirically), so the downstream
+        # join is unchanged.
+        negex_enabled = cfg.nli.contradict.get("negex", True)
+        if not negex_enabled:
+            logger.info("phase 3'': NegEx disabled — using segmented_contradict directly")
+            negex_out = seg
+        else:
+            logger.info("phase 3'': NegEx + cue-list filter")
+            negex_out = run_dir / "negex_contradict.parquet"
+            with metadata.phase_timer("negex_filter", phase_results):
+                if negex_out.exists() and negex_out.stat().st_size > 0:
+                    logger.info(f"reusing existing {negex_out.name}")
+                else:
+                    counts = filter_negated(
+                        seg,
+                        out_parquet=negex_out,
+                        audit_jsonl=run_dir / "negation_audit.jsonl",
+                        audit_sample=cfg.nli.contradict.audit_sample,
+                    )
+                    logger.info(f"negex counts: {counts}")
 
-        logger.info("phase 4: contradiction NLI (DeBERTa, sentence-level pairs)")
         import polars as pl
 
         pairs_path = run_dir / "pairs_contradict.parquet"
@@ -220,13 +398,30 @@ def main(cfg: DictConfig) -> None:
             pair_df = negex_df.join(ret_df, on=["qa_id", "sentence_id"], how="left")
             pair_df.write_parquet(pairs_path)
 
-        with metadata.phase_timer("nli_contradict_pairs", phase_results):
-            nli_con_pairs = _maybe_run(
-                run_dir / "nli_contradict_pairs.parquet",
-                score_contradict_pairs, pairs_path,
-                model_name=cfg.nli.contradict.model,
-                batch_size=cfg.nli.contradict.batch_size, _logger=logger,
-            )
+        # Phase 2 §7: dispatch between the DeBERTa classification head
+        # (default) and the SciFive seq2seq constrained-decoding head.
+        nli_type = cfg.nli.contradict.get("type", "deberta")
+        if nli_type == "t5":
+            logger.info("phase 4: contradiction NLI (T5 seq2seq, constrained decoding)")
+            with metadata.phase_timer("nli_contradict_pairs", phase_results):
+                nli_con_pairs = _maybe_run(
+                    run_dir / "nli_contradict_pairs.parquet",
+                    score_contradict_pairs_t5, pairs_path,
+                    model_name=cfg.nli.contradict.model,
+                    batch_size=cfg.nli.contradict.batch_size,
+                    fp16=cfg.nli.contradict.get("fp16", True),
+                    chunk_size=cfg.nli.contradict.get("chunk_size", 4),
+                    _logger=logger,
+                )
+        else:
+            logger.info("phase 4: contradiction NLI (DeBERTa, sentence-level pairs)")
+            with metadata.phase_timer("nli_contradict_pairs", phase_results):
+                nli_con_pairs = _maybe_run(
+                    run_dir / "nli_contradict_pairs.parquet",
+                    score_contradict_pairs, pairs_path,
+                    model_name=cfg.nli.contradict.model,
+                    batch_size=cfg.nli.contradict.batch_size, _logger=logger,
+                )
         logger.info("phase 5: aggregate contradiction max-pool")
         with metadata.phase_timer("aggregate_contradict", phase_results):
             nli_con = _maybe_run(
@@ -243,13 +438,30 @@ def main(cfg: DictConfig) -> None:
                 tau_sup=cfg.selection.tau_sup,
                 tau_con=cfg.selection.tau_con,
                 cap=cfg.selection.cap,
+                # Phase 2 §6: phase2_allow_existing variant flips this.
+                exclude_existing=cfg.selection.get("exclude_existing", True),
             ),
         )
         submission_path = write_official_submission(
             selection, topics, run_dir / "task_a_output.json"
         )
-        validate_official(submission_path)
-        logger.info(f"submission validated: {submission_path}")
+        # Phase 2 §6: the official validator enforces the existing-citations
+        # track rule. When the variant explicitly relaxes the rule
+        # (``selection.exclude_existing=False``) we expect the validator to
+        # reject the submission — log the rejection and continue to eval
+        # so the dual-pool numbers are still captured. Any other variant
+        # must still validate.
+        try:
+            validate_official(submission_path)
+            logger.info(f"submission validated: {submission_path}")
+        except Exception as exc:
+            if cfg.selection.get("exclude_existing", True) is False:
+                logger.warning(
+                    "submission validator rejected the run, as expected for "
+                    f"phase2_allow_existing: {exc}"
+                )
+            else:
+                raise
 
         logger.info("phase 7: evaluation")
         qrels_2025_path = repo / cfg.paths.qrels_2025

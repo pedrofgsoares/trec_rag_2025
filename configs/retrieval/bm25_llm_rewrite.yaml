@@ -1,0 +1,20 @@
+# Phase 2 §12.10 — BM25 over LLM-generated query variants, RRF-fused.
+# Attacks lexical mismatch at *source* (rewrite the claim) instead of
+# the standard PRF approach of expanding from retrieved docs. Different
+# mechanism from §7.4 (blind RM3) and §12.7 (LLM-filtered RM3), and the
+# only retrieval variant that does not depend on a separate dense index.
+flavour: bm25_llm_rewrite
+k1: 0.9
+b: 0.4
+support_k: 100
+contradict_k: 1000
+llm_rewrite:
+  backend: openai-mini       # cheap; ~$0.05 per full run with CoT
+  prompt: cot                # mandatory reasoning step before queries — generalises
+                             # the §6 finding (CoT > strict for biomedical LLM tasks
+                             # in this codebase) to query generation
+  n_variants: 3              # 3 LLM-generated + 1 original = 4 rankings fused
+  include_original: true
+  max_concurrent: 4
+rrf:
+  k: 60                      # Cormack et al. 2009 standard

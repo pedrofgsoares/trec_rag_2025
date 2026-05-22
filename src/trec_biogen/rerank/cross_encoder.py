@@ -23,6 +23,35 @@ DEFAULT_TOP_K = 30
 MAX_LEN = 512
 
 
+def passthrough_rerank(
+    retrieval_parquet: Path,
+    *,
+    out_path: Path,
+    top_k: int = DEFAULT_TOP_K,
+) -> Path:
+    """No-op rerank: keep the BM25 top-K per cell with a rerank-shaped schema.
+
+    Used by the ``phase2_no_rerank`` variant (Phase 2 §4) to skip the
+    MedCPT-CE forward pass while keeping ``score_support``'s input contract
+    unchanged. ``ce_score`` is set to ``bm25_score`` and ``rank_after_rerank``
+    to the original BM25 rank, so any downstream code that sorts by either
+    column behaves consistently.
+    """
+    df = pl.read_parquet(retrieval_parquet)
+    enriched = (
+        df.sort(["qa_id", "sentence_id", "rank"])
+        .group_by(["qa_id", "sentence_id"], maintain_order=True)
+        .head(top_k)
+        .with_columns(
+            pl.col("bm25_score").alias("ce_score"),
+            pl.col("rank").alias("rank_after_rerank"),
+        )
+    )
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    enriched.write_parquet(out_path)
+    return out_path
+
+
 def rerank_support(
     retrieval_parquet: Path,
     bm25: BM25Index,

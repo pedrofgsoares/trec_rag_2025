@@ -1,0 +1,20 @@
+# @package _global_
+# Phase 2 §7 — SciFive-large contradict variant (variant 3).
+# Swaps DeBERTa-MNLI for razent/SciFive-large-Pubmed_PMC-MedNLI on the
+# contradict path only; support stays on DeBERTa. Run via:
+#
+#   uv run python -m trec_biogen.pipeline.run_task_a \
+#       --config-name run/phase2_scifive_large \
+#       +reuse_from=runs/<phase1_baseline_run_dir>
+#
+# Resume mode reuses retrieval, rerank, support NLI, and segmentation
+# parquets; only the contradict NLI step is re-run. Wall-clock ~30 h.
+defaults:
+  - phase1_baseline
+  - override /nli: scifive_large_contradict
+  - _self_
+
+phase2_variant: scifive_large
+
+run:
+  label: phase2_scifive_large

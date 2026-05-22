@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from trec_biogen.eval.metrics import evaluate
+from trec_biogen.eval.metrics import DEFAULT_QRELS_PATHS, evaluate, main
 from trec_biogen.io.qrels import load_qrels
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -78,3 +78,83 @@ def test_all_metrics_finite_and_in_unit_interval() -> None:
         for cls in ("support", "contradict"):
             for k, v in report[setting][cls].items():
                 assert 0.0 <= v <= 1.0, f"{setting}/{cls}/{k}={v}"
+
+
+# -- Phase 2 §3.8: dual-pool + source filter ------------------------------
+
+
+def test_load_expanded_qrels_carries_source_attribution() -> None:
+    """LLM rows must be tagged with their non-'human' source so the
+    --source filter can isolate them downstream."""
+    idx = load_qrels(FIXTURES / "mini_qrels_expanded.jsonl")
+    # Q001 sentence 0 support: 10000001 (human) + 99999999 (LLM).
+    key = ("Q001", 0, "support")
+    assert idx.strict_sources[key]["10000001"] == "human"
+    assert idx.strict_sources[key]["99999999"] == "openai-gpt-4o-mini"
+
+
+def test_source_filter_human_recovers_official_pool_numbers() -> None:
+    """`--source=human` on the expanded file MUST reproduce the metrics
+    you'd get from the human-only file. This is the §6.5 reproducibility
+    contract."""
+    human_qrels = load_qrels(FIXTURES / "mini_qrels.jsonl")
+    expanded_qrels = load_qrels(FIXTURES / "mini_qrels_expanded.jsonl")
+    a = evaluate(FIXTURES / "mini_submission.jsonl", human_qrels, unjudged_as_zero=False)
+    b = evaluate(
+        FIXTURES / "mini_submission.jsonl", expanded_qrels,
+        unjudged_as_zero=False, source="human",
+    )
+    for setting in ("strict", "relaxed"):
+        for cls in ("support", "contradict"):
+            for k in ("P", "R", "F1"):
+                assert abs(a[setting][cls][k] - b[setting][cls][k]) < 1e-9, (
+                    f"{setting}/{cls}/{k} drifted: human-only={a[setting][cls][k]} "
+                    f"vs expanded+source=human={b[setting][cls][k]}"
+                )
+
+
+def test_source_filter_any_unions_human_and_llm() -> None:
+    """Default `source=any` on the expanded file credits LLM-attributed
+    positives. Submission Q001 sentence 0 predicts 99999999 which is now
+    an LLM-positive — recall must go up vs human-only."""
+    human_qrels = load_qrels(FIXTURES / "mini_qrels.jsonl")
+    expanded_qrels = load_qrels(FIXTURES / "mini_qrels_expanded.jsonl")
+    a = evaluate(FIXTURES / "mini_submission.jsonl", human_qrels, unjudged_as_zero=False)
+    b = evaluate(FIXTURES / "mini_submission.jsonl", expanded_qrels, unjudged_as_zero=False)
+    # Strict support: under human-only, Q001 s0 has positives={10000001} and
+    # we predict 3 -> P=1/3, R=1, F1=0.5. Under expanded, positives now
+    # include 99999999 (LLM) -> P=2/3, R=1, F1=0.8. F1 should increase.
+    assert b["strict"]["support"]["F1"] > a["strict"]["support"]["F1"]
+
+
+def test_source_filter_llm_isolates_llm_only_contribution() -> None:
+    """`--source=llm` keeps only LLM-attributed positives. Cells with no
+    LLM positives drop to F1=0 (under unjudged_as_zero=True)."""
+    expanded_qrels = load_qrels(FIXTURES / "mini_qrels_expanded.jsonl")
+    rep = evaluate(FIXTURES / "mini_submission.jsonl", expanded_qrels, source="llm")
+    # Only Q001 s0 support has an LLM positive (99999999), predicted; and
+    # only Q002 s1 contradict has an LLM positive (10000008), predicted in
+    # the submission as part of {10000003, 10000006}. The other cells are
+    # human-only-positive and become F1=0 under source=llm.
+    assert 0.0 < rep["strict"]["support"]["F1"] < 1.0
+
+
+def test_default_qrels_paths_constant_is_consistent() -> None:
+    """The convenience constant must point at the canonical file names
+    referenced in the design and reports."""
+    assert DEFAULT_QRELS_PATHS["official"].name == "biogen2025_taskA_qrels.jsonl"
+    assert DEFAULT_QRELS_PATHS["expanded"].name == "biogen2025_taskA_qrels_expanded.jsonl"
+
+
+def test_cli_qrels_pool_resolves_default_path(tmp_path: Path, capsys) -> None:
+    """`--qrels-pool=official` must be a working substitute for `--qrels=<path>`."""
+    out = tmp_path / "metrics.json"
+    rc = main(
+        [
+            "--submission", str(FIXTURES / "mini_submission.jsonl"),
+            "--qrels", str(FIXTURES / "mini_qrels.jsonl"),
+            "--out", str(out),
+        ]
+    )
+    assert rc == 0
+    assert out.exists()

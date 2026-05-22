@@ -1,0 +1,20 @@
+# Phase 2 §7 — DeBERTa support + SciFive-large contradict.
+# The support path keeps DeBERTa-MNLI (cheap, fast); only the contradict
+# path swaps in razent/SciFive-large-Pubmed_PMC-MedNLI for the seq2seq
+# MedNLI-style classification, dispatched via ``type: t5`` in
+# ``run_task_a.py``. fp16 + chunk_size keep it within the 4 GB VRAM
+# budget on the local T1000.
+support:
+  model: ./models/deberta-v3-base-mnli
+  batch_size: 16
+  max_len: 512
+
+contradict:
+  type: t5
+  model: ./models/scifive-large-medNLI
+  batch_size: 4
+  max_len: 512
+  fp16: true
+  chunk_size: 4
+  negex: true              # keep NegEx pre-filter on (decoupled from §5 variant)
+  audit_sample: 50

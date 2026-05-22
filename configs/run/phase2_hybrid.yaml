@@ -1,0 +1,15 @@
+# @package _global_
+# Phase 2 §9.7 — hybrid sparse + dense retrieval variant (variant 4b).
+# Largest investment in §9: requires the MedCPT-Article-Encoder FAISS
+# index over the top-5M PMID subset to be built once (scripts/build_dense_index.sh,
+# ~24 h CPU). Per-query overhead at run time is one MedCPT-Query-Encoder
+# forward pass (~50 ms CPU) plus a FAISS-CPU search over 5M vectors.
+defaults:
+  - phase1_baseline
+  - override /retrieval: hybrid_rrf
+  - _self_
+
+phase2_variant: hybrid
+
+run:
+  label: phase2_hybrid

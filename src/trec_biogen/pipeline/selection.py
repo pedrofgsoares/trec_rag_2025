@@ -26,6 +26,12 @@ class SelectionConfig:
     tau_sup: float = 0.5      # min entailment_prob for support
     tau_con: float = 0.5      # min contradict_score for contradict
     cap: int = 3              # max PMIDs per (sentence, class)
+    # Phase 2 §6: when False, do not exclude PMIDs listed in the input
+    # answer's ``existing_supported_citations``. The official validator
+    # still enforces the track rule downstream, so this only changes the
+    # *internal* selection — useful for the ``phase2_allow_existing``
+    # ablation variant that probes whether the rule is over-restrictive.
+    exclude_existing: bool = True
 
 
 def _candidates_per_sentence(
@@ -94,7 +100,7 @@ def select(
         used: set[str] = set()  # global dedup within topic
         topic_out: dict[int, dict[str, list[str]]] = {}
         for sid in cells:
-            excluded = existing_idx.get((qa_id, sid), set())
+            excluded = existing_idx.get((qa_id, sid), set()) if cfg.exclude_existing else set()
 
             chosen_sup: list[str] = []
             for pmid, _ in sup_pool.get((qa_id, sid), []):

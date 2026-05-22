@@ -141,3 +141,98 @@ def score_contradict_pairs(
     out.write_parquet(out_path)
     unload(model, tok)
     return out_path
+
+
+def _t5_label_token_ids(tokenizer) -> dict[str, int]:
+    """First-token ID for each MedNLI label, used for constrained decoding.
+
+    SciFive-large outputs the label as a free-form string ("entailment",
+    "neutral", "contradiction"). At inference we only generate one token
+    and project the logits onto these three IDs to extract calibrated
+    probabilities — equivalent to a classifier head, in a single
+    decoding step.
+    """
+    out: dict[str, int] = {}
+    for label in _DEBERTA_LABELS:
+        ids = tokenizer.encode(label, add_special_tokens=False)
+        if not ids:
+            raise ValueError(f"tokenizer produced no tokens for label {label!r}")
+        out[label] = ids[0]
+    return out
+
+
+def score_contradict_pairs_t5(
+    pairs_parquet: Path,
+    *,
+    out_path: Path,
+    model_name: str,
+    batch_size: int = 4,
+    fp16: bool = True,
+    chunk_size: int = 4,
+) -> Path:
+    """T5 seq2seq variant of the contradict NLI step (Phase 2 §7).
+
+    Designed for ``razent/SciFive-large-Pubmed_PMC-MedNLI``: feeds the
+    standard MedNLI prompt format and uses constrained decoding over the
+    three label tokens to extract ``contradiction_prob`` per pair.
+
+    Same input/output schema as :func:`score_contradict_pairs` so the
+    downstream aggregator is identical. ``chunk_size`` caps the per-step
+    forward batch for memory; on 4 GB VRAM with fp16 the safe value is 4.
+    ``batch_size`` is the outer iteration unit and may be > ``chunk_size``
+    (it is then split into chunks internally).
+    """
+    import torch
+    from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+
+    dev = device()
+    tok = AutoTokenizer.from_pretrained(model_name)
+    dtype = torch.float16 if fp16 else torch.float32
+    model = AutoModelForSeq2SeqLM.from_pretrained(
+        model_name, torch_dtype=dtype,
+    ).to(dev).eval()
+
+    df = pl.read_parquet(pairs_parquet)
+    pairs = list(
+        zip(df["sentence_text"].to_list(), df["abstract_sentence_text"].to_list(), strict=True)
+    )
+
+    label_ids = _t5_label_token_ids(tok)
+    id_order = [label_ids[lbl] for lbl in _DEBERTA_LABELS]
+    con_local_idx = _DEBERTA_LABELS.index("contradiction")
+
+    chunk = max(1, min(chunk_size, batch_size))
+    scores: list[float] = []
+    with torch.inference_mode():
+        for batch_start in range(0, len(pairs), batch_size):
+            batch = pairs[batch_start : batch_start + batch_size]
+            for sub_start in range(0, len(batch), chunk):
+                sub = batch[sub_start : sub_start + chunk]
+                prompts = [
+                    f"mednli: premise: {abstract} hypothesis: {sent}"
+                    for sent, abstract in sub
+                ]
+                enc = tok.batch_encode_plus(
+                    prompts,
+                    padding=True,
+                    truncation=True,
+                    max_length=MAX_LEN,
+                    return_tensors="pt",
+                ).to(dev)
+                gen = model.generate(
+                    **enc,
+                    max_new_tokens=1,
+                    do_sample=False,
+                    output_scores=True,
+                    return_dict_in_generate=True,
+                )
+                first_step_logits = gen.scores[0]
+                label_logits = first_step_logits[:, id_order]
+                probs = torch.softmax(label_logits.float(), dim=-1)
+                scores.extend(probs[:, con_local_idx].cpu().tolist())
+
+    out = df.with_columns(pl.Series("contradiction_prob", scores))
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    out.write_parquet(out_path)
+    unload(model, tok)
+    return out_path
