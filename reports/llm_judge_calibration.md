@@ -2,6 +2,20 @@
 
 Reliability diagrams + isotonic-calibration fit for the two CoT backends on the 588-triple human concordance set. Reads the per-call records dumped by `validate --records-out`. ECE is the standard expected-calibration-error metric: lower is better-calibrated.
 
+> **Methodological caveat (added 2026-05-22 after external review):**
+> the isotonic mapping is *fit and evaluated on the same 588 triples*.
+> The post-fit ECE values below (~0.003 for mini-cot, ~0.000 for
+> Together-cot) are therefore **in-sample** estimates and represent the
+> upper bound on calibration quality, not held-out generalisation.
+> Pool-adjacent-violators trivially achieves near-zero ECE on its
+> training set by linear-interpolating between observed bins; the true
+> downstream calibration quality on novel (sentence, abstract) pairs is
+> likely worse. A defensive estimate would run k-fold CV (folds at
+> qa_id boundaries to avoid topical leakage) and report the
+> cross-validated ECE; that work is deferred. The raw ECE numbers
+> (0.1136 mini, 0.0961 Together) are unaffected by this caveat — they
+> measure the *uncalibrated* model, where train-test split is moot.
+
 
 ## openai-gpt-4o-mini-cot
 

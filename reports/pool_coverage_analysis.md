@@ -1,10 +1,27 @@
-# Pool-coverage statistical analysis — Phase 2 §12.6
+# Pool-size sensitivity analysis — Phase 2 §12.6
 
-Bootstrapped recall-vs-pool-size on the §2.17 expanded qrels (4758 positives across 313 cells). B = 200 per fraction. Seed = 0.
+**Methodology note (revised 2026-05-22 after external review):** the
+resampling here is *sub-sampling of positives without replacement* (a
+thinning / jackknife-style operation), not a classical bootstrap on
+F1. Each iteration drops a random fraction of the expanded qrels'
+positives and re-scores; cells whose positives are entirely removed
+revert to the `unjudged_as_zero` rule. The reported intervals are
+the 2.5th / 97.5th percentiles across N=200 thinning iterations per
+fraction (seed=0). They measure **sensitivity of F1 to pool size and
+the identity of the retained positives**, not a frequentist CI on
+the true-population F1 given the current pool. The qualitative
+conclusion below (variant ordering is stable at full pool, unstable
+at thin pool) is valid under the thinning interpretation; the
+original "bootstrap CI" framing was statistically loose.
 
-**Reading the table**: each row is one variant at one pool fraction. *Mean ± 95% CI* are the bootstrap percentiles. As fraction → 1.0 the score approaches the variant's expanded-pool number reported in `reports/phase2_summary.md`. As fraction → small, the score approaches what we would see under a 2025-official-style thin pool that does not match the variant's pick distribution.
+**Reading the table**: each row is one variant at one pool fraction.
+*Mean ± [P2.5, P97.5]* are the per-fraction empirical percentiles.
+As fraction → 1.0 the score approaches the variant's expanded-pool
+number reported in `reports/phase2_summary.md`. As fraction → small,
+the score approaches what we would see under a 2025-official-style
+thin pool that does not match the variant's pick distribution.
 
-## Support F1 — bootstrap mean and 95% CI per pool fraction
+## Support F1 — thinning mean and P2.5/P97.5 per pool fraction
 
 | Variant | 0.05 | 0.10 | 0.20 | 0.40 | 0.60 | 0.80 | 1.00 |
 |---|---|---|---|---|---|---|---|
@@ -14,7 +31,7 @@ Bootstrapped recall-vs-pool-size on the §2.17 expanded qrels (4758 positives ac
 | bm25_rm3 |  2.34 [ 1.21,  3.83] |  3.77 [ 2.22,  5.59] |  5.67 [ 4.22,  7.17] |  7.36 [ 6.35,  8.56] |  8.14 [ 7.17,  9.02] |  8.59 [ 7.98,  9.18] |  8.97 [ 8.97,  8.97] |
 | starter_baseline |  3.98 [ 2.32,  6.00] |  6.62 [ 4.77,  8.74] |  9.79 [ 7.52, 12.02] | 13.15 [11.58, 14.91] | 14.80 [13.57, 16.04] | 15.86 [14.98, 16.66] | 16.55 [16.55, 16.55] |
 
-## Contradict F1 — bootstrap mean and 95% CI per pool fraction
+## Contradict F1 — thinning mean and P2.5/P97.5 per pool fraction
 
 | Variant | 0.05 | 0.10 | 0.20 | 0.40 | 0.60 | 0.80 | 1.00 |
 |---|---|---|---|---|---|---|---|
@@ -26,7 +43,7 @@ Bootstrapped recall-vs-pool-size on the §2.17 expanded qrels (4758 positives ac
 
 ## Visual: support F1 curve (ASCII)
 
-Each bar is the bootstrap mean at one fraction, scaled to [0, 50 pp].
+Each bar is the thinning mean at one fraction, scaled to [0, 50 pp].
 
 ```
 phase1_baseline             

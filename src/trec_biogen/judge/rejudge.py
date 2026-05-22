@@ -191,6 +191,17 @@ def load_existing_llm_judgements(out_path: Path) -> dict[tuple[str, int, str], J
     after a quota/cost-cap halt skips triples already judged. The reloaded
     records carry ``skip_reason="resumed"`` and zero cost so this session's
     cost accounting only reflects new spend.
+
+    KNOWN LIMITATION (Codex review #3, 2026-05-22): the expanded-qrels
+    file only contains LLM positives — rows whose label was Neutral /
+    Not relevant are dropped by :func:`emit_expanded_qrels` because they
+    do not contribute to either positive class. Consequence: those calls
+    are *paid for* but not persisted, and resume mode re-classifies them.
+    Empirically ~20-30 % of rejudge calls are Neutral / Not relevant, so
+    the cost penalty of a mid-run abort + resume is ~20-30 % of the
+    completed-but-non-positive subset. A fix would persist all per-call
+    records to a sidecar (`<out>.records.jsonl`) consulted alongside the
+    qrels file on resume. Deferred to Phase 2.6.
     """
     if not out_path.exists():
         return {}
@@ -313,20 +324,27 @@ def cmd_validate(args: argparse.Namespace, *, backend: Backend | None = None) ->
         answer_sentence_lookup=answer_lookup,
         records_out=args.records_out,
     )
+    min_class_f1 = getattr(args, "min_class_f1", 0.05)
     report = render_report(
-        result, backend_name=judge.name, qrels_path=args.qrels, threshold=args.threshold,
+        result, backend_name=judge.name, qrels_path=args.qrels,
+        threshold=args.threshold, min_class_f1=min_class_f1,
     )
     args.report.parent.mkdir(parents=True, exist_ok=True)
     args.report.write_text(report, encoding="utf-8")
     print(report)
     if args.metadata_run_dir:
         write_run_metadata(args.metadata_run_dir, record_to_metadata_payload(records))
-    if not result.passes(args.threshold):
-        print(
-            f"::error::concordance gate failed: macro weighted F1 = "
-            f"{result.macro_weighted_f1:.4f} < {args.threshold:.2f}",
-            file=sys.stderr,
-        )
+    if not result.passes(args.threshold, min_class_f1=min_class_f1):
+        # Surface which leg of the gate failed for clearer ops debugging.
+        reasons = []
+        if result.macro_weighted_f1 < args.threshold:
+            reasons.append(
+                f"macro weighted F1 = {result.macro_weighted_f1:.4f} < {args.threshold:.2f}"
+            )
+        for cls, m in result.per_class.items():
+            if m.support > 0 and m.f1 < min_class_f1:
+                reasons.append(f"{cls} F1 = {m.f1:.4f} < {min_class_f1:.2f}")
+        print("::error::concordance gate failed: " + "; ".join(reasons), file=sys.stderr)
         return 1
     return 0
 
@@ -620,7 +638,15 @@ def _build_parser() -> argparse.ArgumentParser:
     v.add_argument("--qrels", type=Path, required=True)
     v.add_argument("--topics", type=Path, required=True)
     v.add_argument("--index", type=Path, required=True, help="BM25 index dir.")
-    v.add_argument("--threshold", type=float, default=0.85)
+    v.add_argument("--threshold", type=float, default=0.85,
+                   help="Macro support-weighted-F1 floor.")
+    v.add_argument(
+        "--min-class-f1", type=float, default=0.05,
+        help="Per-class F1 floor for every class with non-zero gold support. "
+             "Defensive against single-class classifiers that pass the weighted "
+             "macro gate. Default 0.05 (any plausible CoT judge clears it; "
+             "raise to 0.20-0.30 for stricter requirements).",
+    )
     v.add_argument("--report", type=Path, default=Path("reports/llm_judge_validation.md"))
     v.add_argument("--metadata-run-dir", type=Path, default=None)
     v.add_argument(
@@ -640,8 +666,15 @@ def _build_parser() -> argparse.ArgumentParser:
         "--out", type=Path,
         default=Path("data/qrels/biogen2025_taskA_qrels_expanded.jsonl"),
     )
-    r.add_argument("--cost-cap", type=float, default=None,
-                   help="USD spend cap; aborts gracefully when reached.")
+    r.add_argument(
+        "--cost-cap", type=float, default=None,
+        help="USD spend cap; aborts gracefully when reached. NOTE the cap "
+             "is soft under concurrency: ThreadPoolExecutor submits all "
+             "futures up-front, so at the moment the cap fires up to "
+             "`--max-concurrent` calls may still be in-flight and complete. "
+             "Worst-case over-spend is `max_concurrent × max_per_call_cost` "
+             "(typically < $0.01 at our defaults).",
+    )
     r.add_argument("--max-concurrent", type=int, default=4)
     r.add_argument("--metadata-run-dir", type=Path, default=None)
     r.add_argument(

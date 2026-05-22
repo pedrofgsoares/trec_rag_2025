@@ -14,13 +14,77 @@ import pytest
 
 from trec_biogen.judge.backends import Judge, JudgeRecord, RecordedBackend
 from trec_biogen.judge.validator import (
+    ClassMetric,
     Triple,
+    ValidationResult,
     bootstrap_ci,
     load_validation_triples,
     render_report,
     run_validation,
     score,
 )
+
+
+def _result(per_class_f1_support: dict[str, tuple[float, int]], macro_w_f1: float) -> ValidationResult:
+    """Build a ValidationResult fixture with hand-picked per-class F1/support."""
+    per_class = {
+        cls: ClassMetric(precision=f1, recall=f1, f1=f1, support=sup)
+        for cls, (f1, sup) in per_class_f1_support.items()
+    }
+    total = sum(sup for _, sup in per_class_f1_support.values())
+    return ValidationResult(
+        per_class=per_class,
+        confusion={cls: {} for cls in per_class_f1_support},
+        macro_weighted_f1=macro_w_f1,
+        total=total,
+    )
+
+
+def test_gate_rejects_degenerate_always_supports_classifier() -> None:
+    """Codex review #1: an always-Supports classifier scores
+    ~0.90 weighted-macro on the 549 Sup + 39 Con human pool, which would
+    pass a single-threshold 0.85 gate despite Contradicts F1 = 0. The
+    per-class floor (default 0.05) MUST reject it."""
+    # Realistic numbers for always-Supports on the human pool.
+    degenerate = _result(
+        {"Supports": (0.967, 549), "Contradicts": (0.0, 39),
+         "Neutral": (0.0, 0), "Not relevant": (0.0, 0)},
+        macro_w_f1=0.903,
+    )
+    # Old single-threshold gate would PASS (0.903 > 0.85).
+    assert degenerate.macro_weighted_f1 >= 0.85
+    # New two-part gate REJECTS (Contradicts F1 = 0 < 0.05 floor).
+    assert not degenerate.passes(threshold=0.85)
+    # And the floor is overrideable.
+    assert not degenerate.passes(threshold=0.85, min_class_f1=0.20)
+    # Setting floor to 0.0 falls back to the legacy behaviour.
+    assert degenerate.passes(threshold=0.85, min_class_f1=0.0)
+
+
+def test_gate_passes_real_judge_with_default_floor() -> None:
+    """Mini-cot --prompt cot scores Sup F1 ≈ 0.92, Con F1 ≈ 0.48,
+    weighted ≈ 0.89 — clears the default 0.05 floor comfortably."""
+    real = _result(
+        {"Supports": (0.92, 549), "Contradicts": (0.48, 39),
+         "Neutral": (0.0, 0), "Not relevant": (0.0, 0)},
+        macro_w_f1=0.89,
+    )
+    assert real.passes(threshold=0.85)  # default min_class_f1=0.05
+    assert real.passes(threshold=0.85, min_class_f1=0.30)
+    # But a tight per-class floor (e.g. 0.50) would still fail it.
+    assert not real.passes(threshold=0.85, min_class_f1=0.50)
+
+
+def test_gate_ignores_zero_support_classes() -> None:
+    """Neutral and Not-relevant have 0 gold support in the human pool;
+    their F1 floors are not enforced (cannot fail a class the gold never
+    contains)."""
+    result = _result(
+        {"Supports": (0.95, 549), "Contradicts": (0.50, 39),
+         "Neutral": (0.0, 0)},  # zero gold support → ignored
+        macro_w_f1=0.92,
+    )
+    assert result.passes(threshold=0.85, min_class_f1=0.10)
 
 
 def _rec(label: str, conf: float = 0.9) -> JudgeRecord:

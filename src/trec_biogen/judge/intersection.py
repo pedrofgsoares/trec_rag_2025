@@ -26,8 +26,15 @@ Algorithm (per design §D3):
    `incomplete` flag propagated from either input.
 
 The output is a strict superset of the human qrels and a strict
-subset of the canonical `records_a` expanded qrels — re-scoring
-against it cannot inflate any variant's F1.
+subset of the canonical `records_a` expanded qrels. NOTE: re-scoring
+against it *can* in principle inflate an individual variant's F1 —
+removing a positive that a variant did not predict raises that
+variant's recall denominator-side fairness without adding false
+positives. In practice on our data every variant's Contradicts F1
+*decreased* because the pipelines did predict some of the dropped
+contradicts, but the general claim "cannot inflate" is incorrect.
+Reviewers (Codex, 2026-05-22) flagged the original wording; corrected
+here.
 """
 
 from __future__ import annotations

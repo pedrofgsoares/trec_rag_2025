@@ -79,8 +79,25 @@ class ValidationResult:
     macro_weighted_f1: float
     total: int
 
-    def passes(self, threshold: float) -> bool:
-        return self.macro_weighted_f1 >= threshold
+    def passes(self, threshold: float, *, min_class_f1: float = 0.05) -> bool:
+        """Two-part gate: support-weighted macro F1 ≥ ``threshold`` AND every
+        class with non-zero gold support clears ``min_class_f1``.
+
+        Why two parts: the human validation pool is 549 Supports + 39
+        Contradicts. A degenerate classifier that always predicts Supports
+        scores ~0.90 macro-weighted-F1 (Supports F1 ≈ 0.97 × 549/588) and
+        would pass a single-threshold gate despite Contradicts F1 = 0.
+        The default ``min_class_f1=0.05`` is defensive: any plausible real
+        judge clears it comfortably (CoT mini-cot Contradicts F1 = 0.48),
+        but a never-predicts-Contradicts model fails. Set higher (e.g.
+        0.30) for stricter contradict requirements.
+        """
+        if self.macro_weighted_f1 < threshold:
+            return False
+        for cls, m in self.per_class.items():
+            if m.support > 0 and m.f1 < min_class_f1:
+                return False
+        return True
 
 
 def _weighted_f1(per_class: dict[str, ClassMetric]) -> float:
@@ -165,14 +182,17 @@ def render_report(
     backend_name: str,
     qrels_path: Path,
     threshold: float,
+    min_class_f1: float = 0.05,
 ) -> str:
-    verdict = "PASS" if result.passes(threshold) else "FAIL"
+    verdict = "PASS" if result.passes(threshold, min_class_f1=min_class_f1) else "FAIL"
     lines = [
         "# LLM-Judge Concordance Validation",
         "",
         f"- Backend: `{backend_name}`",
         f"- Qrels: `{qrels_path}`",
         f"- Threshold (macro weighted F1): `{threshold:.2f}`",
+        f"- Per-class F1 floor (every class with non-zero gold support): `{min_class_f1:.2f}` "
+        f"(defensive: rules out degenerate single-class classifiers; see `passes()` docstring)",
         f"- Triples scored: {result.total}",
         f"- **Macro weighted F1: {result.macro_weighted_f1:.4f}** ({verdict})",
         "",
