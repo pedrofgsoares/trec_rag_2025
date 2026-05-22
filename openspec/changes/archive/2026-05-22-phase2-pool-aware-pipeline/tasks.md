@@ -175,7 +175,13 @@
   > `openai-gpt-4o-mini --prompt cot` macro weighted F1 = **0.8944** ≥ 0.85.
 - [x] 11.3 Verify at least one variant scores higher than the Phase 1 pipeline on the expanded pool (the success criterion that disproves the "everything was pool bias" null hypothesis)
   > **Two independent confirmations**, on different metrics: (1) `phase2_allow_existing` beats Phase 1 on the *expanded* Supports F1 (16.94 vs 16.43, +0.51 pp — small but consistent across two regeneration runs, and within bootstrap CI per §10.5). (2) `phase2_no_negex` beats Phase 1 on the *official* Contradicts F1 (2.65 vs 0.52, +2.13 pp — large, ~5× Phase 1, statistically meaningful). Either result disproves the null "everything was pool bias"; together they confirm there are real algorithmic levers on both the selection rule and the contradict pre-filter.
-- [ ] 11.4 Tag the repo `phase2-baseline` and archive the change via `/opsx:archive`
+- [x] 11.4 Tag the repo `phase2-baseline` and archive the change via `/opsx:archive`
+  > Done 2026-05-22. Single-commit Phase 2 materialised at `456bd61` (`feat(phase2):
+  > pool-aware evaluation pipeline + judge-augmented qrels`), annotated tag
+  > `phase2-baseline` applied on top, archived via `/opsx:archive`. Remaining open
+  > tasks at archive time: §12.8 (hybrid negation classifier, optional) and §12.9
+  > (extended disagreement review, needs human annotators) — both explicitly
+  > out-of-scope for the unit-curricular deliverable.
 
 ## 12. Methodological Hardening (external review, 2026-05-20)
 
