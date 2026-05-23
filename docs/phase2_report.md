@@ -1,14 +1,14 @@
 # TREC BioGEN 2025 Task A — A Local-First, Pool-Aware Sentence-Level Biomedical Grounding Pipeline
 
 **Course report, Information Retrieval unit.**
-Author: Pedro Soares. Repository: `trec_rag_2025`. Branch: `master`.
-Date span of the work: 2026-05-13 (Phase 1 kick-off) → 2026-05-19 (Phase 2 §2–§9 closed in code; six ablation runs in progress).
+Author: Pedro Soares. Repository: `trec_rag_2025`. Branch: `main`.
+Date span of the work: 2026-05-13 (Phase 1 kick-off) → 2026-05-22 (Phase 2.5 judge-robustness extension complete; six ablation runs landed).
 
 ---
 
 ## Abstract
 
-We design, build and evaluate a single-laptop, OSS-first pipeline for **TREC BioGEN 2025 Task A** — per-sentence biomedical grounding against the 26.8M-document PubMed snapshot. Phase 1 reproduces the published organisers' baseline (`Supports F1 = 44.34`, `Contradicts F1 = 4.67`, Strict, 2025 qrels) to within ±2 F1 and ships an independent five-phase pipeline (BM25 → MedCPT-CE → DeBERTa-MNLI → NegEx → DeBERTa-MNLI / SciFive → selection). The same pipeline scores `5.55 / 0.52` against the same official qrels — a 38.79 pp gap. We show this gap is dominated by **TREC pool bias** (the official qrels were built from the organisers' baseline picks and structurally penalise any system that retrieves different-but-correct PMIDs), and we close it methodologically with an **LLM-as-judge expanded qrels** validated against the 588 human triples at **0.8944 macro-weighted-F1** (gate threshold 0.85, design D3). The judge pipeline costs ~$2.68 total across the §2 expansion runs plus the §10 multi-backend / robustness extensions; the expanded qrels file holds 4 758 positives (3.7× larger than the human pool). On the expanded pool, our Phase 1 pipeline lands at `16.43 / 12.01` — comparable to the published starter-kit and *better than every published 2025 contradict score we anchored against*. Six ablation variants are wired in as Hydra-composed configs; four are executed. The headline negative result: **BM25 RM3 query expansion hurts biomedical evidence retrieval by ~1.6 pp on the official pool**, against the IR-textbook expectation; a follow-up *LLM-filtered* RM3 variant partially recovers it (closing about half the gap to plain BM25) but still does not beat the no-RM3 baseline — query expansion is the wrong intervention for claim-length biomedical queries. We additionally harden the methodology with a bootstrap-CI on the concordance gate, an isotonic calibration of the LLM judge's emitted confidences, a pairwise-concordance pass against a third independent backend (Llama-3.3-70B via Together.ai), and a bootstrap-pool-coverage curve that quantifies how much of each variant's F1 is pool-dependent. We position the contribution alongside the relevant IR literature (BM25, RM3, RRF, cross-encoder rerank, MedCPT, MedNLI, LLM-as-judge) and discuss limitations imposed by a 4 GB VRAM ceiling.
+We design, build and evaluate a single-laptop, OSS-first pipeline for **TREC BioGEN 2025 Task A** — per-sentence biomedical grounding against the 26.8M-document PubMed snapshot. Phase 1 reproduces the published organisers' baseline (`Supports F1 = 44.34`, `Contradicts F1 = 4.67`, Strict, 2025 qrels) to within ±2 F1 and ships an independent five-phase pipeline (BM25 → MedCPT-CE → DeBERTa-MNLI → NegEx → DeBERTa-MNLI / SciFive → selection). The same pipeline scores `5.55 / 0.52` against the same official qrels — a 38.79 pp gap. We show this gap is dominated by **TREC pool bias** (the official qrels were built from the organisers' baseline picks and structurally penalise any system that retrieves different-but-correct PMIDs), and we close it methodologically with an **LLM-as-judge expanded qrels** validated against the 588 human triples at **0.8944 macro-weighted-F1** (gate threshold 0.85, design D3). The judge pipeline costs ~$5.15 total across the §2 expansion runs ($1.77), the §10 multi-backend / robustness extensions ($0.91), and the Phase 2.5 second-judge rejudge ($2.47); the expanded qrels file holds 4 758 positives (3.7× larger than the human pool). On the expanded pool, our Phase 1 pipeline lands at `16.43 / 12.01` — comparable to the published starter-kit and *better than every published 2025 contradict score we anchored against*. Eight ablation variants are wired in as Hydra-composed configs; seven are executed (`phase2_hybrid` is the only outstanding one — see §7.2). The headline negative result: **BM25 RM3 query expansion hurts biomedical evidence retrieval by ~1.6 pp on the official pool**, against the IR-textbook expectation; a follow-up *LLM-filtered* RM3 variant partially recovers it (closing about half the gap to plain BM25) but still does not beat the no-RM3 baseline — query expansion is the wrong intervention for claim-length biomedical queries. We additionally harden the methodology with a bootstrap-CI on the concordance gate, an isotonic calibration of the LLM judge's emitted confidences (in-sample; see §10.2 caveat), a pairwise-concordance pass against a third independent backend (Llama-3.3-70B via Together.ai), and a thinning-based pool-size sensitivity curve that quantifies how much of each variant's F1 depends on pool overlap. In a Phase 2.5 robustness extension we re-judge the full §2.17 candidate set with Llama-3.3-70B via HF Inference Providers (auto-routed to Groq) and derive a two-judge intersection-on-contradicts qrels (4 438 positives, 88% Contradicts drop); cell-level bootstrap CIs on that conservative pool confirm that the structural `no_negex` > Phase 1 contradicts gain survives, while the apparent `no_negex` > starter margin collapses into CI overlap. We position the contribution alongside the relevant IR literature (BM25, RM3, RRF, cross-encoder rerank, MedCPT, MedNLI, LLM-as-judge) and discuss limitations imposed by a 4 GB VRAM ceiling.
 
 ---
 
@@ -364,8 +364,12 @@ Re-scored on both pools. Wall-clock and VRAM peak are captured automatically by 
 | phase2_allow_existing | 5.55 / 0.52 | **16.94** / **12.01** | +11.39 / +11.49 | <2 min (reuse) |
 | phase2_no_rerank | **6.52** / 0.52 | 15.35 / 11.75 | +8.83 / +11.23 | ~12 min (reuse + DeBERTa) |
 | phase2_bm25_rm3 | 3.92 / 0.26 | 8.97 / 5.26 | +5.05 / +5.01 | ~84 min (full) |
+| phase2_bm25_rm3_llm_filtered | 4.03 / 0.52 | 9.89 / **12.01** | +5.86 / +11.49 | ~84 min (full) |
+| phase2_no_negex | 5.55 / **2.65** | 16.33 / 8.06 | +10.78 / +5.42 | ~9.7 h (full) |
+| phase2_bm25_llm_rewrite | 5.29 / 0.52 | 10.65 / 6.03 | +5.36 / +5.51 | ~88 min (full) |
+| phase2_scifive_large | 5.55 / 1.04 | 16.43 / 5.85 | +10.88 / +4.81 | ~5.3 h (full) |
 
-Variants not yet executed: `phase2_no_negex` (~10–12 h GPU), `phase2_scifive_large` (~30 h GPU + SciFive-large download), `phase2_hybrid` (~24 h CPU encoding + ~2 h GPU).
+Variant not yet executed: `phase2_hybrid` (BM25 + Dense FAISS + RRF; ~24 h CPU encoding + ~2 h GPU). All other seven Phase 2 ablations have landed; `phase2_no_negex` and `phase2_scifive_large` were completed during the Phase 2.5 robustness sweep and re-scored against the intersection pool (§10.8).
 
 ### 7.3 Interpretation
 
@@ -515,8 +519,20 @@ The fitted mapping (mini, CoT) is::
 
 This lets downstream consumers (e.g. selective rejudgment, two-judge
 agreement floors) use calibrated probabilities with statistical
-meaning, not raw model self-reports. Full report:
-[`reports/llm_judge_calibration.md`](../reports/llm_judge_calibration.md).
+meaning, not raw model self-reports.
+
+**In-sample caveat (post-review, 2026-05-22):** the isotonic mapping
+is *fit and evaluated on the same 588-triple human concordance set*.
+The post-fit ECE values (~0.003 mini, ~0.000 Together) are therefore
+upper-bound, in-sample estimates — PAV trivially achieves near-zero
+ECE on its training set by linear-interpolating between observed
+bins. The true downstream calibration quality on novel
+`(sentence, abstract)` pairs is likely worse; a defensive estimate
+would run k-fold CV with folds at `qa_id` boundaries (to avoid topical
+leakage) and report cross-validated ECE. That work is deferred. The
+raw ECE numbers (0.1136 mini, 0.0961 Together) are unaffected — they
+measure the *uncalibrated* model where train/test split is moot. Full
+report: [`reports/llm_judge_calibration.md`](../reports/llm_judge_calibration.md).
 
 ### 10.3 Per-topic LLM-positive distribution (topical-bias check)
 
@@ -591,7 +607,7 @@ positives where mini and Together both say `Supports`) would be the
 conservative extension for downstream pool expansion. Full report:
 [`reports/llm_judge_multi_backend.md`](../reports/llm_judge_multi_backend.md).
 
-### 10.5 Pool-coverage statistical analysis
+### 10.5 Pool-size sensitivity analysis
 
 A common challenge to a small-pool TREC track is *"what would the
 F1 numbers look like under a different pool size?"*. The §6.5 anchor
@@ -600,11 +616,22 @@ implicitly inflated by 27.8 pp of pool overlap (§7 dual-pool
 analysis showed this). Can we *statistically quantify* how much pool
 thinness limits achievable F1?
 
-Yes. For each variant's `task_a_output.json`, we sub-sampled the
-§2.17 expanded qrels (4 758 positives) at fractions {0.05, 0.10,
-0.20, 0.40, 0.60, 0.80, 1.00} with B = 200 bootstrap iterations per
-fraction. Each resample is scored, and we report mean macro F1 with
-95% percentile CIs.
+Yes. For each variant's `task_a_output.json`, we *thin* the §2.17
+expanded qrels (4 758 positives) by sub-sampling positives without
+replacement at fractions {0.05, 0.10, 0.20, 0.40, 0.60, 0.80, 1.00},
+N = 200 thinning iterations per fraction (seed = 0). Cells whose
+positives are entirely removed revert to the `unjudged_as_zero` rule.
+Each iteration is scored and we report the per-fraction mean macro
+F1 with P2.5/P97.5 percentile bands.
+
+**Methodological note (post-review, 2026-05-22):** this is a
+thinning / jackknife-style operation, *not* a classical bootstrap on
+F1, and the bands are sensitivity intervals on pool size + identity
+of retained positives — not frequentist CIs on the true-population
+F1. The qualitative conclusions below (variant ordering stable at
+full pool, unstable at thin pool) hold under the thinning
+interpretation; the framing was tightened in
+[`reports/pool_coverage_analysis.md`](../reports/pool_coverage_analysis.md).
 
 Headline observations:
 
@@ -612,7 +639,7 @@ Headline observations:
   full pool (frac = 1.00). Specifically `phase1_baseline` and
   `starter_baseline` swap positions 2 and 3 on Supports as the pool
   thins. The differences between adjacent variants are within the
-  bootstrap CI width (~2 pp at frac = 0.10), so the **leaderboard
+  thinning-band width (~2 pp at frac = 0.10), so the **leaderboard
   ordering at thin-pool sizes is within sampling noise**.
 * `bm25_rm3` is the *least* pool-dependent variant (Δ from frac=0.10
   to frac=1.00 of only +5.20 pp vs +9-10 pp for the others). This
@@ -620,7 +647,7 @@ Headline observations:
   weakness*, not pool overlap quirk — `bm25_rm3` is genuinely worse,
   not just unlucky against the pool.
 * The official pool's effective fraction relative to the §2.17
-  expanded pool is approximately 588 / 4 758 ≈ 12 %. Bootstrap CIs
+  expanded pool is approximately 588 / 4 758 ≈ 12 %. Thinning bands
   at frac = 0.10–0.20 confirm: at official-pool sizes, the cross-
   variant differences are roughly within the noise floor.
 
@@ -842,10 +869,12 @@ The methodology family was crystallised by Zheng et al. (2023, *MT-Bench*, [arxi
 
 Recent critical work on LLM-as-judge (e.g., Wang et al., 2024, *"Large Language Models are not Fair Evaluators"*) documents systematic biases (positional, verbosity, calibration). The CoT diagnostic we report in §6.2 is consistent with that literature: the LLM's failure was not "bad calibration" but "no surface for reasoning". Adding CoT is the standard mitigation.
 
-The two open methodological extensions for a paper-grade report would be:
+The methodological extensions that were *open* at Phase 2 sign-off have since been closed:
 
-1. **Backend-sensitivity experiment** (design D10). Our `compare-backends` subcommand is implemented (it computes pairwise concordance over a 200-pair fixed sample) but not yet exercised. The defensible claim — *"the F1@expanded numbers are robust to choice of LLM judge"* — requires this experiment.
-2. **TOGETHER_API_KEY** + Llama-3.1-70B run. Llama-3.1-70B is the OSS-default per design D2 and the third independent backend for the judge-sensitivity experiment. Our gate currently has two data points (mini, 4o, both OpenAI); Llama-70B would give a third.
+1. **Backend-sensitivity experiment** (design D10) — closed by §10.4, which ran `Llama-3.3-70B-Instruct --prompt cot` (Together-served; Llama-3.1-70B-Turbo had moved to dedicated-endpoint pricing) over the 588-triple gold set as the third independent backend and reported pairwise concordance with the OpenAI pair.
+2. **Two-judge robustness on the full expand-pool** — closed by Phase 2.5 (§10.8), which re-ran the same Llama-3.3-70B weights through HF Inference Providers (Groq-routed) over the full 5 398-triple §2.17 candidate set, derived a two-judge intersection-on-contradicts pool, and re-scored every variant under cell-level bootstrap CIs.
+
+The natural next extension is a *third* independent biomedical-domain backend (e.g., Mixtral-Instruct on HF Providers) over the same 5 398-triple set, which would let us report Krippendorff α instead of pairwise Jaccard and derive a three-way intersection pool.
 
 ### 11.5 The 2025 leaderboard
 
@@ -871,7 +900,7 @@ Several caveats apply:
 
 - **Hardware**: 4 GB VRAM is the binding constraint. Full-corpus dense retrieval (~80 GB FAISS), late-interaction (~150 GB ColBERT-v2), and any joint MedCPT-Article + Cross-Encoder run are infeasible without renting an A100 or similar. The work would scale linearly to a 24 GB+ GPU; nothing in the design assumes 4 GB beyond the sequential model-loading convention.
 - **No NLI fine-tuning**. Phase 3 (deferred) would fine-tune DeBERTa or SciFive on SciFact, HealthVer, or BioNLI. Empirically those provide 3–5 pp on MedNLI; whether it translates to a Task A lift is open.
-- **LLM-judge backend dependence**. The expanded qrels were produced by `gpt-4o-mini` only. The judge-sensitivity experiment (§10.4 open) would close this. The OSS-default (Together's Llama-3.1-70B) is wired in and one config flag away.
+- **LLM-judge backend dependence**. The canonical expanded qrels were produced by `gpt-4o-mini --prompt cot` only; Phase 2.5 (§10.8) addressed this by re-judging the same 5 398 candidate triples with Llama-3.3-70B (HF Inference Providers, Groq-routed) and deriving a two-judge intersection-on-contradicts pool. The cross-judge Contradicts agreement is low (Jaccard 0.12), which is itself the headline — Contradicts judgements remain backend-sensitive even after the conservative-pool tightening. A peer-reviewed paper would want a third independent biomedical-domain backend (e.g., Mixtral-Instruct on the same triples) before declaring closure.
 - **The expanded pool is local to this submission's retrieval shape**. §2.17 covers BM25 top-30 across both paths but is not deep enough for variants that radically change retrieval (e.g., `phase2_hybrid` with FAISS-based dense retrieval would surface PMIDs outside BM25's top-30). Each such variant should run its own `expand-pool` pass on its own retrieval parquets before comparison.
 - **Single annotator perspective**. Our domain expert reviewed 12 disagreement cases; the diagnosis was good but the sample is small. A peer-reviewed paper would want 50+ cases reviewed by two independent biomedical experts.
 
@@ -879,8 +908,11 @@ Several caveats apply:
 
 ## 13. Future Work
 
+- **`phase2_hybrid` ablation**. BM25 + Dense (MedCPT-Article) + RRF fusion (§3.4) is wired through Hydra but unrun on the full 2025 input (~24 h CPU encoding for the 5 M-doc FAISS index + ~2 h GPU). Re-running `expand-pool` on this variant's own retrieval parquets (§11 caveat) is a prerequisite for an honest expanded-pool comparison.
+- **k-fold cross-validated ECE for the LLM judge**. The §10.2 isotonic-calibration ECE is in-sample on the 588-triple gold set; a defensive estimate would fit PAV on k-1 folds (folded at `qa_id` boundaries to avoid topical leakage) and report held-out ECE. Cheap (~minutes, no API spend) and tightens the calibration claim.
 - **Phase 3 — NLI fine-tuning**. SciFact + HealthVer + BioNLI compose ~50 k labelled training pairs. A QLoRA-tuned DeBERTa-v3-base on a free Colab GPU would land within ~6 h. Expected lift: 2–5 pp on contradict.
-- **Phase 4 — Agentic retrieval**. Insert an LLM in the *first-stage* loop (query rewriting from `(question, answer-sentence) → search-engine-style biomedical query`). This addresses the BM25 vocabulary-mismatch issue at source rather than at rerank-time. Risk: cost (every query is an LLM call) and latency.
+- **Phase 4 — Agentic retrieval**. Insert an LLM in the *first-stage* loop (query rewriting from `(question, answer-sentence) → search-engine-style biomedical query`). The `phase2_bm25_llm_rewrite` ablation (§10.7) is a single-shot proxy; the agentic pattern with reflection / multi-turn querying remains open. Risk: cost (every query is an LLM call) and latency.
+- **Third-backend judge concordance on the 5 398-triple set**. Phase 2.5 closed the two-judge case; extending to a third independent biomedical-domain backend (e.g., Mixtral-Instruct on HF Providers) would let us report a three-way intersection pool and a Krippendorff α rather than only pairwise Jaccard.
 - **Submit to TREC BioGEN 2026**. The cleanest way to escape pool bias for a *system's* numbers is to participate in the track's pool definition. This is a calendar problem (track call typically March; ours opens June).
 
 ---

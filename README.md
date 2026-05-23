@@ -102,22 +102,37 @@ different-but-correct PMIDs is structurally penalised). Phase 2 adds:
   `--source={human,llm,any}` on `eval/metrics.py`. The §6.5 reproducibility
   anchor is recovered via `--qrels-pool=expanded --source=human` (verified
   by `tests/test_metrics.py`). Headline result: the Phase 1 pipeline
-  scored **5.55 / 0.52 on the official pool but 44.34 / 15.92 on the
-  expanded pool** — Δ = +38.79 / +15.40 pp, confirming pool bias as the
-  dominant residual error.
-* **Six ablation variants** as Hydra configs, all inheriting `phase1_baseline`:
+  scored **5.55 / 0.52 on the official pool but 16.43 / 12.01 on the
+  §2.17 expanded pool** — Δ = +10.88 / +11.49 pp, confirming pool bias
+  as a structural contributor to the apparent residual error.
+* **Eight ablation variants** as Hydra configs, all inheriting `phase1_baseline`
+  (seven executed; `phase2_hybrid` is the outstanding one):
 
   | variant | what it changes | runtime |
   |---|---|---|
   | `phase2_no_rerank` | skip MedCPT-CE; BM25 top-30 → support NLI | ~1 h |
   | `phase2_no_negex` | skip NegEx; contradict NLI over ~1.9M pairs | ~10–12 h |
   | `phase2_allow_existing` | relax `existing_supported_citations` exclusion | ~1 h |
-  | `phase2_scifive_large` | swap contradict NLI to SciFive-large (fp16, T5 seq2seq) | ~30 h |
+  | `phase2_scifive_large` | swap contradict NLI to SciFive-large (fp16, T5 seq2seq) | ~5 h actual |
   | `phase2_bm25_rm3` | enable Pyserini RM3 query expansion | ~2 h |
+  | `phase2_bm25_rm3_llm_filtered` | LLM-filtered PRF over RM3 pseudo-relevant set | ~2 h |
+  | `phase2_bm25_llm_rewrite` | first-stage LLM query rewriting (single-shot) | ~90 min |
   | `phase2_hybrid` | BM25 + Dense (MedCPT-Encoder 5M-doc FAISS), RRF fused | ~24 h encoding + ~2 h run |
 
   Variants compose via Hydra defaults (`phase2_scifive_large_no_negex` is
   a valid invocation pattern).
+
+### Phase 2.5 — judge robustness extension
+
+A second-judge rejudge of the §2.17 candidate set with
+`Llama-3.3-70B-Instruct --prompt cot` (HF Inference Providers,
+auto-routed to Groq) feeds a **two-judge intersection-on-contradicts pool**
+at [`data/qrels/biogen2025_taskA_qrels_intersection.jsonl`](data/qrels/biogen2025_taskA_qrels_intersection.jsonl).
+`eval/metrics.py` exposes it via `--qrels-pool=intersection`. The
+intersection-pool column is now part of
+[`reports/phase2_summary.md`](reports/phase2_summary.md); detailed
+analysis is in [`reports/judge_intersection_analysis.md`](reports/judge_intersection_analysis.md)
+and the per-topic deltas in [`reports/per_topic_error_analysis.md`](reports/per_topic_error_analysis.md).
 
 ### Phase 2 commands
 
@@ -159,12 +174,16 @@ uv run python -m trec_biogen.pipeline.run_task_a \
 [`reports/phase2_summary.md`](reports/phase2_summary.md) carries one row per
 run (scanned from `runs/*/metadata.yaml::phase2_variant`):
 
-| variant | F1@official Sup/Con | F1@expanded Sup/Con | Δ Sup/Con | wall-clock | VRAM | LLM-judge $ |
+| variant | F1@official Sup/Con | F1@expanded Sup/Con | F1@intersection Sup/Con | Δ Sup/Con | wall-clock | VRAM | LLM-judge $ |
 
 * **F1@official**: published §6.5 methodology. Use for direct comparison
   with the published 44.34 / 4.67 baseline and the public leaderboard.
-* **F1@expanded**: same submission, scored against the LLM-judge-augmented
-  pool. Use for cross-variant comparison free of pool bias.
+* **F1@expanded**: same submission, scored against the single-judge
+  (`gpt-4o-mini --prompt cot`) LLM-augmented pool. Use for cross-variant
+  comparison free of pool bias.
+* **F1@intersection**: Phase 2.5 two-judge intersection-on-contradicts
+  pool (mini-cot ∩ Llama-3.3-70B-cot). Use as the conservative reading —
+  Contradicts judgements that only one judge endorses do not count.
 * **Δ**: positive when the expanded pool credits picks the official pool
   penalised as false positives. Large Δ ⇒ this variant's picks were
   systematically outside the official pool.
@@ -173,15 +192,21 @@ The gap analysis behind these numbers lives in
 [`reports/phase1_gap_analysis.md`](reports/phase1_gap_analysis.md); the
 methodology + cost breakdown for the LLM judge in
 [`reports/llm_judge_validation.md`](reports/llm_judge_validation.md). The
-full design rationale is at
-[`openspec/changes/phase2-pool-aware-pipeline/`](openspec/changes/phase2-pool-aware-pipeline/).
+full design rationale is in
+[`openspec/changes/archive/2026-05-22-phase2-pool-aware-pipeline/`](openspec/changes/archive/2026-05-22-phase2-pool-aware-pipeline/)
+and the Phase 2.5 extension in
+[`openspec/changes/archive/2026-05-22-phase2-5-judge-robustness/`](openspec/changes/archive/2026-05-22-phase2-5-judge-robustness/).
 
-### Phase 2 secrets
+### Phase 2 / 2.5 secrets
 
 LLM-judge backends read API keys from environment variables:
 `OPENAI_API_KEY` (for `--backend openai-mini` and `--backend openai`),
-`TOGETHER_API_KEY` (for the OSS-default `--backend together`,
-Llama-3.1-70B). Local `.env` is git-ignored; see [`.env.example`](.env.example).
+`TOGETHER_API_KEY` (for `--backend together`, currently mapped to
+Llama-3.3-70B-Instruct-Turbo via Together's serverless tier), and
+`HF_TOKEN` (for `--backend hf-llama`, the Phase 2.5 route through HF
+Inference Providers auto-routed to Groq — same Llama-3.3-70B weights at a
+different price/latency point). Local `.env` is git-ignored; see
+[`.env.example`](.env.example).
 
 ## Known limits (Phase 1)
 
