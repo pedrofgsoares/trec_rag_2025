@@ -43,7 +43,7 @@
 
 ## 6. Sign-off
 
-- [ ] 6.1 Run full test suite (`uv run pytest`); verify the §6.5 anchor still recovers 44.34 byte-for-byte under all four pool modes
-- [ ] 6.2 Verify cost ledger: combined Qwen spend (gold + expand-pool) ≤ $5; update the cost ledger in `reports/phase2_summary_commentary.md` with the Phase 2.6 total
-- [ ] 6.3 Commit as a single `feat(phase2.6):` commit; tag `phase2.6-baseline` if the gate passed and the 3-way Contradicts pool has ≥ 20 positives, else tag `phase2.6-judge-robustness-ii` (methodological hardening only — same fallback convention as Phase 2.5)
-- [ ] 6.4 Archive the change via `/opsx:archive`
+- [x] 6.1 Full suite passes: **240 pass, 2 env-gated skipped**. §6.5 anchor (`--source=human` over `--qrels-pool=official|expanded|intersection|intersection-3way`) recovers **44.3360 byte-for-byte** on all four pool modes.
+- [x] 6.2 Cost ledger: Phase 2.6 total = $4.00 (gold $0.36 + expand-pool $3.64 incl. resume) — inside the $5 hard ceiling. `reports/phase2_summary_commentary.md` §14 records the breakdown plus the cumulative programme total of $9.17.
+- [x] 6.3 Committed as `feat(phase2.6): held-out ECE + three-judge intersection-on-contradicts pool` (`33ea682`). Tag `phase2.6-baseline` applied per the design D1 convention (gate passed AND 3-way Contradicts pool has 31 positives, above the 20 floor).
+- [x] 6.4 Archive via `/opsx:archive`.

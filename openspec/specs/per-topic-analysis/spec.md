@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+Per-`qa_id` F1 analysis of pipeline variants, plus the `per_topic_diff` script for inspecting concrete PMID-level disagreements between two runs on a chosen topic.
+
+## Requirements
 
 ### Requirement: Topic-level F1 aggregation from per-cell metrics
 The evaluation module SHALL provide a `per_topic_f1(run_dir, *, pool="intersection")` helper that, given a completed run directory and a qrels-pool selector, returns a mapping `qa_id -> {support: {P, R, F1, n_cells}, contradict: {P, R, F1, n_cells}}`. The per-cell numbers SHALL be re-derived from the run's cached `task_a_output.json` and the chosen qrels pool; the aggregation SHALL be the arithmetic mean of cell-level F1 across the cells belonging to that `qa_id`.

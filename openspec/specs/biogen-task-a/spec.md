@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+The BioGEN 2025 Task A grounding pipeline — per-sentence biomedical claim grounding against the PubMed corpus, producing supporting and contradicting PMID citations per answer sentence.
+
+## Requirements
 
 ### Requirement: Pipeline accepts the official Task A input JSONL
 The system SHALL read an input file conforming to the official BioGEN 2025 Task A format: UTF-8 JSONL where each line is a topic object containing a `metadata` block (`team_id`, `run_id`, `qa_id`, `question`) and an `answer` array of sentence objects. Each sentence object SHALL be addressable by its `qa_id` and its position within the `answer` array.

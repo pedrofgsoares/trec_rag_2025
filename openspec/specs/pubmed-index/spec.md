@@ -1,4 +1,8 @@
-## ADDED Requirements
+## Purpose
+
+PubMed corpus ingestion + BM25 Lucene index build (26.8M abstracts, ~37 GB on-disk), with a sentinel-PMID round-trip test as the integrity anchor.
+
+## Requirements
 
 ### Requirement: Official BioGEN 2025 corpus is downloaded and verified
 The system SHALL provide a script that downloads `biogen-2025-document-collection.zip` from the official URL, extracts it under `data/raw/pubmed_baseline/`, and verifies its integrity by document count.
