@@ -35,6 +35,7 @@ from trec_biogen.eval.calibration import (
     apply_isotonic,
     expected_calibration_error,
     isotonic_regression,
+    kfold_ece,
     reliability_bins,
 )
 
@@ -57,11 +58,27 @@ def load_pairs(path: Path) -> list[tuple[float, int]]:
     return out
 
 
+def load_records(path: Path) -> list[dict]:
+    """Return full per-call records, carrying ``qa_id`` for k-fold splitting."""
+    out: list[dict] = []
+    with path.open("rb") as fh:
+        for line in fh:
+            line = line.strip()
+            if not line:
+                continue
+            out.append(orjson.loads(line))
+    return out
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(prog="judge_calibration")
     p.add_argument("--records", nargs="+", required=True)
     p.add_argument("--labels", nargs="+", required=True)
     p.add_argument("--bins", type=int, default=10)
+    p.add_argument("--kfold", type=int, default=5,
+                   help="Number of folds for the held-out CV ECE (Phase 2.6 §1). "
+                        "Folds split by qa_id to prevent topical leakage.")
+    p.add_argument("--seed", type=int, default=0)
     p.add_argument("--out", type=Path, default=REPO / "reports/llm_judge_calibration.md")
     args = p.parse_args(argv)
 
@@ -70,29 +87,45 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     body: list[str] = []
-    body.append("# LLM-Judge Calibration — Phase 2 §12.2\n")
+    body.append("# LLM-Judge Calibration — Phase 2 §12.2 / Phase 2.6 §1\n")
     body.append(
-        "Reliability diagrams + isotonic-calibration fit for the two CoT "
-        "backends on the 588-triple human concordance set. Reads the per-call "
-        "records dumped by `validate --records-out`. ECE is the standard "
-        "expected-calibration-error metric: lower is better-calibrated.\n"
+        "Reliability diagrams + isotonic-calibration fit for the CoT backends on "
+        "the 588-triple human concordance set. Reads the per-call records dumped "
+        "by `validate --records-out`. ECE is the standard expected-calibration-error "
+        "metric: lower is better-calibrated.\n"
+    )
+    body.append(
+        "> **Phase 2.6 update (2026-05-23):** the post-isotonic ECE is now reported "
+        "as a **held-out k=5 cross-validated mean** with folds split at `qa_id` "
+        "boundaries (so the same topic never appears in both the PAV fit and the "
+        "evaluation). This closes the in-sample caveat added in the Phase 2.5 "
+        "code-review pass: PAV trivially achieves near-zero ECE on its training set, "
+        "so the in-sample values reported in Phase 2 (~0.003 mini, ~0.000 Together) "
+        "were upper bounds. The held-out numbers below are the defensible figure. "
+        "Raw (uncalibrated) ECE is fit-free and matches the Phase 2 value byte-for-byte.\n"
     )
 
     for rec_path, label in zip(args.records, args.labels):
         path = Path(rec_path)
         pairs = load_pairs(path)
+        records = load_records(path)
         if not pairs:
             print(f"[calib] no records in {path}", file=sys.stderr)
             continue
         n = len(pairs)
         bins = reliability_bins(pairs, n_bins=args.bins)
         ece = expected_calibration_error(bins)
-        # Build the calibration mapping.
+        # In-sample mapping for the breakpoint table (the mapping itself is
+        # what callers apply at inference time — they have no held-out fold
+        # to fit on at deploy time; the held-out ECE is purely a *quality
+        # claim* about that mapping).
         mapping = isotonic_regression(pairs)
-        # Compute ECE *after* applying the mapping for a sanity check.
-        calibrated_pairs = [(apply_isotonic(c, mapping), y) for c, y in pairs]
-        calib_bins = reliability_bins(calibrated_pairs, n_bins=args.bins)
-        ece_after = expected_calibration_error(calib_bins)
+        in_sample_calibrated = [(apply_isotonic(c, mapping), y) for c, y in pairs]
+        ece_in_sample = expected_calibration_error(
+            reliability_bins(in_sample_calibrated, n_bins=args.bins)
+        )
+        # Held-out k-fold CV ECE.
+        cv = kfold_ece(records, k=args.kfold, n_bins=args.bins, seed=args.seed)
 
         body.append(f"\n## {label}\n")
         body.append(
@@ -100,7 +133,12 @@ def main(argv: list[str] | None = None) -> int:
             f"- Overall accuracy: {mean(c for _, c in pairs):.4f}\n"
             f"- Mean raw confidence: {mean(c for c, _ in pairs):.4f}\n"
             f"- **ECE (raw)**: {ece:.4f}\n"
-            f"- **ECE (after isotonic fit)**: {ece_after:.4f}\n"
+            f"- **ECE (after isotonic, in-sample)**: {ece_in_sample:.4f} "
+            "*(upper bound — pre-2026-05-23 number, kept for reference)*\n"
+            f"- **ECE (after isotonic, k={cv['k']}-fold held-out CV)**: "
+            f"{cv['ece_calibrated_mean']:.4f} ± {cv['ece_calibrated_std']:.4f} "
+            "*(defensible figure; folds split by `qa_id`)*\n"
+            f"- Held-out fold sizes: {cv['n_per_fold']}\n"
         )
         body.append("### Reliability diagram (raw confidences)\n")
         body.append("| Bin (raw conf range) | n | mean pred | empirical acc | gap |")
@@ -164,10 +202,15 @@ def main(argv: list[str] | None = None) -> int:
         "use the isotonic-calibrated values when applying a confidence "
         "threshold downstream (e.g., for two-backend agreement floors "
         "or selective rejudgment).\n\n"
-        "If ECE (after isotonic) is ≪ ECE (raw), the fit recovered "
-        "meaningful calibration structure. If they are similar, the raw "
-        "confidences are already approximately well-calibrated — common "
-        "for modern instruction-tuned LLMs on simple binary-ish tasks."
+        "Compare the **in-sample** vs **held-out** post-isotonic ECE: the "
+        "in-sample number is an upper bound (PAV interpolates between the "
+        "exact bins it was fit on); the held-out number is what a deployed "
+        "calibrator would actually achieve on novel `(sentence, abstract)` "
+        "pairs from new topics. The gap quantifies how much of the apparent "
+        "calibration quality is generalisation vs memorisation. With folds "
+        "split at `qa_id` boundaries, the held-out estimate is conservative "
+        "against the leakage mode that matters most for this task (same-topic "
+        "PMIDs recurring across sentences)."
     )
 
     args.out.parent.mkdir(parents=True, exist_ok=True)

@@ -146,6 +146,8 @@ def test_default_qrels_paths_constant_is_consistent() -> None:
     assert DEFAULT_QRELS_PATHS["expanded"].name == "biogen2025_taskA_qrels_expanded.jsonl"
     # Phase 2.5: intersection pool is the third canonical path.
     assert DEFAULT_QRELS_PATHS["intersection"].name == "biogen2025_taskA_qrels_intersection.jsonl"
+    # Phase 2.6: three-judge intersection-on-contradicts pool.
+    assert DEFAULT_QRELS_PATHS["intersection-3way"].name == "biogen2025_taskA_qrels_intersection_3way.jsonl"
 
 
 def test_source_filter_human_recovers_official_on_intersection_pool(tmp_path: Path) -> None:
@@ -180,6 +182,40 @@ def test_source_filter_human_recovers_official_on_intersection_pool(tmp_path: Pa
                 )
 
 
+def test_source_filter_human_recovers_official_on_intersection_3way_pool(tmp_path: Path) -> None:
+    """Phase 2.6: `--source=human` on the three-way intersection pool MUST
+    also reproduce the official-pool numbers byte-for-byte. Same reasoning
+    as the two-way case: the 3-way intersection is a strict superset of
+    the human qrels, so filtering down to human-only positives must equal
+    the human-only file."""
+    from trec_biogen.judge.intersection import emit_intersection_pool
+
+    human_path = FIXTURES / "mini_qrels.jsonl"
+    expanded_path = FIXTURES / "mini_qrels_expanded.jsonl"
+    # Use the same expanded file as all three inputs — the 3-way intersection
+    # collapses to the expanded set itself (every contradict agrees with
+    # itself, three times over).
+    intersection_3way_path = tmp_path / "mini_qrels_intersection_3way.jsonl"
+    emit_intersection_pool(
+        [expanded_path, expanded_path, expanded_path],
+        human_qrels_path=human_path, out_path=intersection_3way_path,
+    )
+    human = load_qrels(human_path)
+    intersection_3way = load_qrels(intersection_3way_path)
+    a = evaluate(FIXTURES / "mini_submission.jsonl", human, unjudged_as_zero=False)
+    b = evaluate(
+        FIXTURES / "mini_submission.jsonl", intersection_3way,
+        unjudged_as_zero=False, source="human",
+    )
+    for setting in ("strict", "relaxed"):
+        for cls in ("support", "contradict"):
+            for k in ("P", "R", "F1"):
+                assert abs(a[setting][cls][k] - b[setting][cls][k]) < 1e-9, (
+                    f"{setting}/{cls}/{k} drifted: human-only={a[setting][cls][k]} "
+                    f"vs intersection-3way+source=human={b[setting][cls][k]}"
+                )
+
+
 def test_cli_qrels_pool_resolves_default_path(tmp_path: Path, capsys) -> None:
     """`--qrels-pool=official` must be a working substitute for `--qrels=<path>`."""
     out = tmp_path / "metrics.json"
@@ -192,3 +228,24 @@ def test_cli_qrels_pool_resolves_default_path(tmp_path: Path, capsys) -> None:
     )
     assert rc == 0
     assert out.exists()
+
+
+def test_cli_intersection_3way_pool_graceful_exit_when_missing(tmp_path: Path, monkeypatch) -> None:
+    """Phase 2.6: requesting --qrels-pool=intersection-3way when the file
+    is absent SHALL exit non-zero with a message naming the missing file
+    and pointing at the intersection helper."""
+    import pytest
+    # Move to a temp working dir so DEFAULT_QRELS_PATHS["intersection-3way"]
+    # (which is relative) resolves to a non-existent path.
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as exc_info:
+        main(
+            [
+                "--submission", str(FIXTURES / "mini_submission.jsonl"),
+                "--qrels-pool", "intersection-3way",
+            ]
+        )
+    msg = str(exc_info.value)
+    assert "biogen2025_taskA_qrels_intersection_3way.jsonl" in msg
+    # Hint must point at the intersection CLI or helper (either wording is fine).
+    assert "trec_biogen.judge.intersection" in msg

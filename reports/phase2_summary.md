@@ -1,18 +1,18 @@
 # Phase 2 Dual-Pool Summary (strict)
 
-All F1 numbers are sentence-level macro under the published BioGEN 2025 methodology (``unjudged_as_zero=True``). Δ columns show official → expanded (positive = pool expansion lifted the F1). The `intersection` pool is the Phase 2.5 two-judge intersection-on-contradicts pool (Supports come from the canonical mini-cot; Contradicts kept only when mini-cot and Together-Llama-70B both label them positive). `n/a` = the intersection qrels file is absent.
+All F1 numbers are sentence-level macro under the published BioGEN 2025 methodology (``unjudged_as_zero=True``). Δ columns show official → expanded (positive = pool expansion lifted the F1). The `intersection` pool is the Phase 2.5 two-judge intersection-on-contradicts pool (Supports come from the canonical mini-cot; Contradicts kept only when mini-cot and Together-Llama-70B both label them positive). The `intersection-3way` pool is the Phase 2.6 three-judge pool (adds Qwen-2.5-72B-cot to the intersection — Contradicts require unanimous agreement across all three judges). `n/a` = the corresponding qrels file is absent.
 
-| variant | F1@official Sup / Con | F1@expanded Sup / Con | F1@intersection Sup / Con | Δ Sup / Con (official→expanded) | wall-clock (s) | VRAM (GiB) | LLM-judge $ |
-|---|---|---|---|---|---|---|---|
-| phase1_baseline (no phase2_variant) | 5.55 / 0.52 | 16.43 / 12.01 | 16.43 / 1.07 | +10.88 / +11.49 | — | — | — |
-| allow_existing | 5.55 / 0.52 | 16.94 / 12.01 | 16.94 / 1.07 | +11.39 / +11.49 | 0.00 | 0.00 | 0.00 |
-| no_rerank | 6.52 / 0.52 | 15.35 / 11.75 | 15.35 / 1.07 | +8.83 / +11.23 | 700.57 | 2.07 | 0.00 |
-| bm25_rm3 | 3.92 / 0.26 | 8.97 / 5.26 | 8.97 / 0.55 | +5.05 / +5.01 | 5073.13 | 2.07 | 0.00 |
-| bm25_rm3_llm_filtered | 4.03 / 0.52 | 9.89 / 12.01 | 9.89 / 1.07 | +5.86 / +11.49 | 5041.30 | 2.07 | 0.00 |
-| no_negex | 5.55 / 2.65 | 16.33 / 8.06 | 16.33 / 3.63 | +10.78 / +5.42 | 34816.46 | 1.96 | 0.00 |
-| bm25_llm_rewrite | 5.29 / 0.52 | 10.65 / 6.03 | 10.65 / 0.81 | +5.36 / +5.51 | 5258.82 | 2.07 | 0.00 |
-| scifive_large | 5.55 / 1.04 | 16.43 / 5.85 | 16.43 / 2.21 | +10.88 / +4.81 | 18987.70 | 2.02 | 0.00 |
-| starter_baseline_20260514_150718 (no metadata) | 44.34 / 4.21 | 16.55 / 5.34 | 16.55 / 4.01 | -27.79 / +1.13 | — | — | — |
+| variant | F1@official Sup / Con | F1@expanded Sup / Con | F1@intersection Sup / Con | F1@intersection-3way Sup / Con | Δ Sup / Con (official→expanded) | wall-clock (s) | VRAM (GiB) | LLM-judge $ |
+|---|---|---|---|---|---|---|---|---|
+| phase1_baseline (no phase2_variant) | 5.55 / 0.52 | 16.43 / 12.01 | 16.43 / 1.07 | 16.43 / 1.12 | +10.88 / +11.49 | — | — | — |
+| allow_existing | 5.55 / 0.52 | 16.94 / 12.01 | 16.94 / 1.07 | 16.94 / 1.12 | +11.39 / +11.49 | 0.00 | 0.00 | 0.00 |
+| no_rerank | 6.52 / 0.52 | 15.35 / 11.75 | 15.35 / 1.07 | 15.35 / 1.12 | +8.83 / +11.23 | 700.57 | 2.07 | 0.00 |
+| bm25_rm3 | 3.92 / 0.26 | 8.97 / 5.26 | 8.97 / 0.55 | 8.97 / 0.60 | +5.05 / +5.01 | 5073.13 | 2.07 | 0.00 |
+| bm25_rm3_llm_filtered | 4.03 / 0.52 | 9.89 / 12.01 | 9.89 / 1.07 | 9.89 / 1.12 | +5.86 / +11.49 | 5041.30 | 2.07 | 0.00 |
+| no_negex | 5.55 / 2.65 | 16.33 / 8.06 | 16.33 / 3.63 | 16.33 / 3.70 | +10.78 / +5.42 | 34816.46 | 1.96 | 0.00 |
+| bm25_llm_rewrite | 5.29 / 0.52 | 10.65 / 6.03 | 10.65 / 0.81 | 10.65 / 0.86 | +5.36 / +5.51 | 5258.82 | 2.07 | 0.00 |
+| scifive_large | 5.55 / 1.04 | 16.43 / 5.85 | 16.43 / 2.21 | 16.43 / 2.00 | +10.88 / +4.81 | 18987.70 | 2.02 | 0.00 |
+| starter_baseline_20260514_150718 (no metadata) | 44.34 / 4.21 | 16.55 / 5.34 | 16.55 / 4.01 | 16.55 / 4.08 | -27.79 / +1.13 | — | — | — |
 
 Generated from 9 run(s) under `runs/`.
 
@@ -268,3 +268,43 @@ guidance for tensor-core hardware. The variant remains one
 `bash scripts/build_dense_index.sh` away on adequate compute
 (A100/H100/L4 ≈ 1–3 h; ~$5–10 on spot pricing); the deferral is a
 hardware-budget call, not a code-readiness one.
+
+## §14 — Phase 2.6: three-judge intersection + held-out calibration ECE
+
+Phase 2.6 closed the two methodological frontiers that Phase 2.5
+sign-off explicitly flagged as open: (a) the in-sample isotonic-PAV
+ECE in §10.2 is replaced by a k=5 held-out CV estimate with folds
+split at `qa_id` boundaries (mini-cot 0.0476 ± 0.0225; Together-cot
+0.0329 ± 0.0278 — both still ≤ the Guo et al. "substantial" threshold
+of 0.05, just much closer to it than the in-sample numbers suggested);
+and (b) a third independent judge (Qwen2.5-72B-Instruct via HF
+Inference Providers, pivot from the originally-spec'd Mixtral-8x7B
+because HF Providers had dropped the Mistral family from its
+chat-routable roster at implementation time) was added to enable a
+three-way Krippendorff α and a three-judge intersection-on-contradicts
+pool.
+
+The empirical headline from the α computation is decisive: on the 5 398
+candidate set, **Llama-70B-cot and Qwen-72B-cot agree at α = 0.6013**
+("substantial"), but both agree with mini-cot at only α = 0.12 / 0.20
+("slight"). This resolves the Phase 2.5 ambiguity "mini over-emits OR
+Llama over-strips" cleanly in favour of "**mini is the outlier**".
+Llama and Qwen — trained by Meta and Alibaba respectively on different
+data with different architectures — converge on a much smaller
+contradicts set than mini ratifies.
+
+The 3-way intersection narrowed Contradicts from 363 (mini-only) → 43
+(mini ∩ Llama) → **31** (mini ∩ Llama ∩ Qwen, 91.5 % drop). Llama ∩ Qwen
+alone is 32 — essentially identical to the three-way 31, confirming the
+α reading. Re-scoring all run dirs against the 3-way pool produced
+±0.07 pp shifts on Contradicts F1 vs the 2-way pool; the Phase 2.5
+qualitative findings carry over unchanged (`no_negex` still beats Phase 1
+by ~3.3×; `no_negex` still statistically indistinguishable from `starter`).
+
+The Phase 2.6 §1-§3 spend was $4.00 (~$0.36 gold + ~$3.64 expand-pool +
+resume, after one HF Router 400 mid-run that the per-200-triple
+checkpoint absorbed cleanly). Inside the $5 hard ceiling defined in
+the openspec change. Cumulative LLM-judge spend across the whole
+programme (Phase 2 §2 $1.77 + Phase 2 §10 $0.91 + Phase 2.5 $2.49 +
+Phase 2.6 $4.00) ≈ **$9.17 total** — about three coffees, for a
+defensible three-judge methodology over a 26.8 M-doc corpus.

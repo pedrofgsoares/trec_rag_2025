@@ -1,4 +1,4 @@
-"""Calibration analysis for the LLM judge (Phase 2 §12.2).
+"""Calibration analysis for the LLM judge (Phase 2 §12.2, Phase 2.6 §1).
 
 Provides:
 
@@ -6,6 +6,8 @@ Provides:
 * :func:`expected_calibration_error` — the standard ECE metric (Guo et al., 2017)
 * :func:`isotonic_regression` — pool-adjacent-violators with tie pooling
 * :func:`apply_isotonic` — apply a fitted PAV mapping with linear interpolation
+* :func:`kfold_ece` — held-out k-fold cross-validated ECE with folds split by
+  ``qa_id`` to prevent topical leakage (Phase 2.6 §1)
 
 The PAV implementation pools ties on x before fitting — without that step,
 the algorithm produces a degenerate fit when the LLM emits the same
@@ -18,6 +20,8 @@ handles I/O + markdown rendering; all the math is here.
 
 from __future__ import annotations
 
+import hashlib
+import statistics
 from collections import defaultdict
 from dataclasses import dataclass
 from statistics import mean
@@ -138,3 +142,110 @@ def apply_isotonic(
             t = (raw - x0) / (x1 - x0)
             return y0 + t * (y1 - y0)
     return mapping[-1][1]
+
+
+def _fold_for_qa_id(qa_id: str, k: int) -> int:
+    """Deterministic fold assignment by hashing ``qa_id`` into ``[0, k)``.
+
+    SHA-1 + modulo gives a stable mapping across Python versions (unlike the
+    builtin ``hash()``, whose ``str`` hashing is randomised per-process).
+    """
+    digest = hashlib.sha1(qa_id.encode("utf-8")).digest()
+    return int.from_bytes(digest[:8], "big") % k
+
+
+def kfold_ece(
+    records: list[dict],
+    *,
+    k: int = 5,
+    n_bins: int = 10,
+    seed: int = 0,  # noqa: ARG001 — reserved for future stochastic variants
+) -> dict[str, float | list[int]]:
+    """Held-out k-fold cross-validated Expected Calibration Error.
+
+    Splits ``records`` into ``k`` folds by ``qa_id`` (every triple from one
+    topic lands in the same fold), fits the isotonic-PAV mapping on the
+    ``k-1`` training folds, predicts on the held-out fold, and aggregates the
+    per-fold ECE values.
+
+    Each record SHALL contain ``qa_id`` (str-coercible), ``confidence`` (float
+    in ``[0, 1]``), ``gold`` and ``pred`` (label strings). Records with a
+    confidence that is not finite are skipped.
+
+    Returns a dict with:
+
+    * ``ece_raw_mean``, ``ece_raw_std`` — per-fold raw (uncalibrated) ECE
+      mean and population standard deviation. Raw ECE is fit-free, so the
+      held-out mean equals the in-sample value to within rounding noise (we
+      report it for completeness and as a regression check).
+    * ``ece_calibrated_mean``, ``ece_calibrated_std`` — the same for ECE
+      after applying the PAV mapping fitted on the training folds.
+    * ``n_per_fold`` — list of held-out triple counts per fold.
+    * ``k`` — number of folds actually used (may differ from the requested
+      ``k`` if fewer distinct ``qa_id`` values are present).
+
+    Folds are assigned deterministically by ``sha1(qa_id) mod k``; the
+    ``seed`` parameter is currently unused but reserved for future variants
+    that shuffle topics across folds.
+    """
+    if k < 2:
+        raise ValueError(f"k must be >= 2, got {k}")
+    if not records:
+        return {
+            "ece_raw_mean": 0.0, "ece_raw_std": 0.0,
+            "ece_calibrated_mean": 0.0, "ece_calibrated_std": 0.0,
+            "n_per_fold": [], "k": 0,
+        }
+
+    # Bucket records by fold (assigned via the qa_id hash).
+    folds: list[list[tuple[float, int]]] = [[] for _ in range(k)]
+    for r in records:
+        conf = float(r.get("confidence", 0.0))
+        if not (0.0 <= conf <= 1.0):
+            continue
+        correct = 1 if r.get("gold") == r.get("pred") else 0
+        fold = _fold_for_qa_id(str(r["qa_id"]), k)
+        folds[fold].append((conf, correct))
+
+    # Drop empty folds (happens when k > distinct qa_id count).
+    populated = [(i, f) for i, f in enumerate(folds) if f]
+    effective_k = len(populated)
+    if effective_k < 2:
+        # Cannot do CV with <2 populated folds; fall back to single-pass.
+        all_pairs = [p for _, f in populated for p in f]
+        bins = reliability_bins(all_pairs, n_bins=n_bins)
+        raw = expected_calibration_error(bins)
+        mapping = isotonic_regression(all_pairs)
+        cal_pairs = [(apply_isotonic(c, mapping), y) for c, y in all_pairs]
+        cal = expected_calibration_error(reliability_bins(cal_pairs, n_bins=n_bins))
+        return {
+            "ece_raw_mean": raw, "ece_raw_std": 0.0,
+            "ece_calibrated_mean": cal, "ece_calibrated_std": 0.0,
+            "n_per_fold": [len(all_pairs)], "k": 1,
+        }
+
+    raw_eces: list[float] = []
+    cal_eces: list[float] = []
+    n_per_fold: list[int] = []
+    for held_out_idx, held_out in populated:
+        train = [p for i, f in populated for p in f if i != held_out_idx]
+        # Raw ECE on held-out fold.
+        raw_eces.append(
+            expected_calibration_error(reliability_bins(held_out, n_bins=n_bins))
+        )
+        # Fit on train, predict on held-out.
+        mapping = isotonic_regression(train)
+        cal_held = [(apply_isotonic(c, mapping), y) for c, y in held_out]
+        cal_eces.append(
+            expected_calibration_error(reliability_bins(cal_held, n_bins=n_bins))
+        )
+        n_per_fold.append(len(held_out))
+
+    return {
+        "ece_raw_mean": mean(raw_eces),
+        "ece_raw_std": statistics.pstdev(raw_eces) if len(raw_eces) > 1 else 0.0,
+        "ece_calibrated_mean": mean(cal_eces),
+        "ece_calibrated_std": statistics.pstdev(cal_eces) if len(cal_eces) > 1 else 0.0,
+        "n_per_fold": n_per_fold,
+        "k": effective_k,
+    }

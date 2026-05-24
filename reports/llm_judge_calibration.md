@@ -1,20 +1,8 @@
-# LLM-Judge Calibration — Phase 2 §12.2
+# LLM-Judge Calibration — Phase 2 §12.2 / Phase 2.6 §1
 
-Reliability diagrams + isotonic-calibration fit for the two CoT backends on the 588-triple human concordance set. Reads the per-call records dumped by `validate --records-out`. ECE is the standard expected-calibration-error metric: lower is better-calibrated.
+Reliability diagrams + isotonic-calibration fit for the CoT backends on the 588-triple human concordance set. Reads the per-call records dumped by `validate --records-out`. ECE is the standard expected-calibration-error metric: lower is better-calibrated.
 
-> **Methodological caveat (added 2026-05-22 after external review):**
-> the isotonic mapping is *fit and evaluated on the same 588 triples*.
-> The post-fit ECE values below (~0.003 for mini-cot, ~0.000 for
-> Together-cot) are therefore **in-sample** estimates and represent the
-> upper bound on calibration quality, not held-out generalisation.
-> Pool-adjacent-violators trivially achieves near-zero ECE on its
-> training set by linear-interpolating between observed bins; the true
-> downstream calibration quality on novel (sentence, abstract) pairs is
-> likely worse. A defensive estimate would run k-fold CV (folds at
-> qa_id boundaries to avoid topical leakage) and report the
-> cross-validated ECE; that work is deferred. The raw ECE numbers
-> (0.1136 mini, 0.0961 Together) are unaffected by this caveat — they
-> measure the *uncalibrated* model, where train-test split is moot.
+> **Phase 2.6 update (2026-05-23):** the post-isotonic ECE is now reported as a **held-out k=5 cross-validated mean** with folds split at `qa_id` boundaries (so the same topic never appears in both the PAV fit and the evaluation). This closes the in-sample caveat added in the Phase 2.5 code-review pass: PAV trivially achieves near-zero ECE on its training set, so the in-sample values reported in Phase 2 (~0.003 mini, ~0.000 Together) were upper bounds. The held-out numbers below are the defensible figure. Raw (uncalibrated) ECE is fit-free and matches the Phase 2 value byte-for-byte.
 
 
 ## openai-gpt-4o-mini-cot
@@ -23,7 +11,9 @@ Reliability diagrams + isotonic-calibration fit for the two CoT backends on the 
 - Overall accuracy: 0.8571
 - Mean raw confidence: 0.8459
 - **ECE (raw)**: 0.1136
-- **ECE (after isotonic fit)**: 0.0032
+- **ECE (after isotonic, in-sample)**: 0.0032 *(upper bound — pre-2026-05-23 number, kept for reference)*
+- **ECE (after isotonic, k=5-fold held-out CV)**: 0.0476 ± 0.0225 *(defensible figure; folds split by `qa_id`)*
+- Held-out fold sizes: [111, 157, 92, 70, 158]
 
 ### Reliability diagram (raw confidences)
 
@@ -71,7 +61,9 @@ Pool-adjacent-violators (PAV) fit. 5 monotone blocks. Apply with `apply_isotonic
 - Overall accuracy: 0.9065
 - Mean raw confidence: 0.8532
 - **ECE (raw)**: 0.0961
-- **ECE (after isotonic fit)**: 0.0000
+- **ECE (after isotonic, in-sample)**: 0.0000 *(upper bound — pre-2026-05-23 number, kept for reference)*
+- **ECE (after isotonic, k=5-fold held-out CV)**: 0.0329 ± 0.0278 *(defensible figure; folds split by `qa_id`)*
+- Held-out fold sizes: [111, 157, 92, 70, 158]
 
 ### Reliability diagram (raw confidences)
 
@@ -119,4 +111,4 @@ Pool-adjacent-violators (PAV) fit. 6 monotone blocks. Apply with `apply_isotonic
 
 If ECE (raw) is *substantial* (≥ 0.05), the model's emitted confidences are not interchangeable with true probabilities; use the isotonic-calibrated values when applying a confidence threshold downstream (e.g., for two-backend agreement floors or selective rejudgment).
 
-If ECE (after isotonic) is ≪ ECE (raw), the fit recovered meaningful calibration structure. If they are similar, the raw confidences are already approximately well-calibrated — common for modern instruction-tuned LLMs on simple binary-ish tasks.
+Compare the **in-sample** vs **held-out** post-isotonic ECE: the in-sample number is an upper bound (PAV interpolates between the exact bins it was fit on); the held-out number is what a deployed calibrator would actually achieve on novel `(sentence, abstract)` pairs from new topics. The gap quantifies how much of the apparent calibration quality is generalisation vs memorisation. With folds split at `qa_id` boundaries, the held-out estimate is conservative against the leakage mode that matters most for this task (same-topic PMIDs recurring across sentences).

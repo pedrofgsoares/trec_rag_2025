@@ -488,12 +488,15 @@ selective rejudgment or two-judge agreement floors. If no, we need
 to recalibrate.
 
 We computed the Expected Calibration Error (Guo et al., 2017, *"On
-Calibration of Modern Neural Networks"*) over 10 equal-width bins:
+Calibration of Modern Neural Networks"*) over 10 equal-width bins.
+The post-isotonic column reports **held-out k=5 cross-validated ECE**
+with folds split at `qa_id` boundaries (Phase 2.6 §1; the in-sample
+value is kept in parentheses as the pre-Phase-2.6 upper bound):
 
-| Backend | ECE (raw) | ECE (after isotonic) |
-|---|---|---|
-| `openai-gpt-4o-mini` × cot | **0.1136** | **0.0032** |
-| `together-llama-3.3-70b` × cot | **0.0961** | **0.0000** |
+| Backend | ECE (raw) | ECE (post-isotonic, in-sample) | ECE (post-isotonic, k=5 held-out CV) |
+|---|---|---|---|
+| `openai-gpt-4o-mini` × cot | **0.1136** | 0.0032 | **0.0476 ± 0.0225** |
+| `together-llama-3.3-70b` × cot | **0.0961** | 0.0000 | **0.0329 ± 0.0278** |
 
 Both backends are **substantially mis-calibrated raw** (ECE > 0.05 is
 the "substantial" threshold from Guo et al.). The mis-calibration
@@ -508,8 +511,8 @@ pattern is the same for both:
 * The 0.9+ bucket is approximately calibrated.
 
 A pool-adjacent-violators (PAV) isotonic regression with tie pooling
-and linear-interpolated prediction recovers near-perfect calibration.
-The fitted mapping (mini, CoT) is::
+and linear-interpolated prediction recovers most (though not all) of
+the calibration gap. The fitted mapping (mini, CoT, in-sample) is::
 
     raw conf 0.60 → 0.00
     raw conf 0.70 → 0.27
@@ -518,20 +521,25 @@ The fitted mapping (mini, CoT) is::
     raw conf 0.95 → 1.00
 
 This lets downstream consumers (e.g. selective rejudgment, two-judge
-agreement floors) use calibrated probabilities with statistical
-meaning, not raw model self-reports.
+agreement floors) use calibrated probabilities that are *closer* to
+statistical meaning than raw model self-reports — the held-out CV ECE
+above quantifies *how much closer*.
 
-**In-sample caveat (post-review, 2026-05-22):** the isotonic mapping
-is *fit and evaluated on the same 588-triple human concordance set*.
-The post-fit ECE values (~0.003 mini, ~0.000 Together) are therefore
-upper-bound, in-sample estimates — PAV trivially achieves near-zero
-ECE on its training set by linear-interpolating between observed
-bins. The true downstream calibration quality on novel
-`(sentence, abstract)` pairs is likely worse; a defensive estimate
-would run k-fold CV with folds at `qa_id` boundaries (to avoid topical
-leakage) and report cross-validated ECE. That work is deferred. The
-raw ECE numbers (0.1136 mini, 0.0961 Together) are unaffected — they
-measure the *uncalibrated* model where train/test split is moot. Full
+**Held-out closure (Phase 2.6 §1, 2026-05-23):** the previous edition
+of this report flagged the post-isotonic ECE as in-sample (PAV trivially
+achieves near-zero ECE on its training set by linear-interpolating
+between observed bins). The k=5 cross-validated ECE above closes that
+caveat. The held-out numbers are **15× larger than the in-sample mini
+estimate** (0.0476 vs 0.0032) and substantially worse for Together
+(0.0329 vs 0.0000), but both still sit at or below the Guo et al.
+"substantial" threshold of 0.05 — i.e., the isotonic calibrator
+*does* generalise across topics, the gain is just much smaller than
+the in-sample fit suggested. Folds are split at `qa_id` boundaries
+via stable SHA-1 hashing so the same topic never appears in both the
+PAV fit and the evaluation; this is the leakage mode that matters
+most for this task (same-topic PMIDs recurring across sentences).
+The raw ECE numbers (0.1136 mini, 0.0961 Together) are unchanged —
+they measure the *uncalibrated* model where train/test split is moot. Full
 report: [`reports/llm_judge_calibration.md`](../reports/llm_judge_calibration.md).
 
 ### 10.3 Per-topic LLM-positive distribution (topical-bias check)
@@ -838,6 +846,91 @@ and [`reports/per_topic_error_analysis.md`](../reports/per_topic_error_analysis.
 The Phase 2.5 work also added incremental-checkpoint atomic writes and
 5xx-retry semantics to the judge backend (lessons learned mid-run); see
 the change at `openspec/changes/archive/2026-05-22-phase2-5-judge-robustness/`.
+
+### 10.9 Three-judge intersection and Krippendorff α (Phase 2.6)
+
+Phase 2.5 left one substantive question open: the 88 % drop on the
+two-judge intersection-on-contradicts pool admits two readings — "mini-cot
+is over-emitting contradicts" or "Llama-70B is over-stripping them". With
+two judges there is no way to triangulate. Phase 2.6 closes this by
+adding a *third* judge from a different model family — design D1 in the
+openspec change selected Mixtral-8x7B via HF Inference Providers, but at
+implementation time HF had removed the Mistral family from the chat-routable
+roster (`400 "not a chat model"`) and the Together-direct fallback hit
+HTTP 402. The pivot, documented in the design, went to **Qwen2.5-72B-Instruct**
+(Alibaba dense 72B, routed by HF Providers to OpenRouter). Same intent:
+third model family distinct from both OpenAI's GPT-4 line and Meta's
+Llama-3 line.
+
+Qwen passed the §6.5 concordance gate at macro-w-F1 = **0.8980** (Supports
+F1 0.944 / Contradicts F1 0.250 / n=549 / n=39). It sits between mini-cot
+(0.8944) and Llama-70B-cot (0.9112) on the macro and matches Llama's
+Contradicts conservatism almost exactly. A second-judge rejudge of the
+full 5 398 §2.17 candidate set was then performed (cost $4.00 total
+across gold + expand-pool, after one HF Router 400 mid-run that resumed
+cleanly from the per-200-triple checkpoint).
+
+A three-way Krippendorff α (Krippendorff 2011 nominal-data formulation,
+implemented in [`eval/metrics.py::krippendorff_alpha`](../src/trec_biogen/eval/metrics.py))
+was then computed across the three judges on both the 588 gold set and
+the 5 398 expand-pool set. The headline:
+
+| α | Value |
+|---|---:|
+| 588 gold set, 3-way α (full label space) | 0.3643 |
+| 5 398 candidate set, 3-way α (full label space) | 0.2992 |
+| 5 398 candidate set, pairwise α: mini ↔ Llama | 0.1166 |
+| 5 398 candidate set, pairwise α: mini ↔ Qwen | 0.2041 |
+| **5 398 candidate set, pairwise α: Llama ↔ Qwen** | **0.6013** |
+
+This resolves the Phase 2.5 open question: **mini-cot is the contradict-class
+outlier**, not three-way disagreement. Llama and Qwen — trained by
+different organisations on different data with different architectures —
+converge on a substantially-agreed set of contradicts (α=0.60, "substantial"
+per Landis & Koch 1977). Mini-cot agrees with neither at much above the
+"slight" level. The two-judge intersection pool from Phase 2.5 was
+effectively "mini's contradicts, filtered through Llama's veto"; the
+three-judge pool is essentially "Llama and Qwen's shared contradicts
+(which mini also happens to ratify in most cases)".
+
+The three-way intersection-on-contradicts pool was emitted by the
+generalised `intersection.emit_intersection_pool(records_paths=[mini, llama, qwen], ...)`
+helper (Phase 2.5's two-judge contract preserved byte-for-byte by a
+regression test that re-emits the archived two-judge pool and asserts
+`out.read_bytes() == archived.read_bytes()`). Counts:
+
+* 363 mini-only contradicts → 43 mini ∩ Llama (Phase 2.5) → **31** mini ∩ Llama ∩ Qwen (Phase 2.6) — 91.5 % drop from mini-only.
+* Pairwise Llama ∩ Qwen alone: 32 — essentially identical to the three-way 31, confirming the α reading.
+* 31 surviving positives clear the design-D2 floor of 20 (macro statistics remain reportable but small-sample caveat applies on Contradicts).
+
+Re-scoring every existing run dir against the 3-way pool (a single column
+appended to [`reports/phase2_summary.md`](../reports/phase2_summary.md)
+via the new `--qrels-pool=intersection-3way` flag in `eval/metrics.py`)
+showed that the Phase 2.5 §10.8 conclusions carry over **unchanged**:
+
+| variant | Contradicts F1 (2-way) | Contradicts F1 (3-way) | Δ |
+|---|---:|---:|---:|
+| starter_baseline | 4.01 | **4.08** | +0.07 |
+| Phase 1 | 1.07 | 1.12 | +0.05 |
+| `no_negex` | 3.63 | **3.70** | +0.07 |
+
+`no_negex` still beats Phase 1 by ~3.3× (the structural Phase 2 finding);
+`no_negex` is still statistically indistinguishable from `starter` (the
+apparent expanded-pool advantage remains an artefact of liberal mini-cot
+ratifications). The +0.07 pp shift across the board is the mechanical
+consequence of going from 43 to 31 Contradicts positives in the denominator;
+the same TP count divided by a smaller pool gives marginally higher F1.
+
+The deferred work the §10.2 caveat asked for — held-out cross-validated
+ECE in place of in-sample isotonic ECE — was also delivered in Phase 2.6
+§1. See §10.2 for the updated calibration table. Together the two §10.2
++ §10.9 deliverables close the methodological frontiers that Phase 2.5
+sign-off explicitly flagged as open. Code and data artefacts under
+[`src/trec_biogen/judge/intersection.py`](../src/trec_biogen/judge/intersection.py)
+(N-way generalisation), [`src/trec_biogen/eval/metrics.py`](../src/trec_biogen/eval/metrics.py)
+(Krippendorff α), [`data/qrels/biogen2025_taskA_qrels_intersection_3way.jsonl`](../data/qrels/biogen2025_taskA_qrels_intersection_3way.jsonl);
+analysis report at [`reports/judge_intersection_analysis.md`](../reports/judge_intersection_analysis.md);
+openspec change at `openspec/changes/archive/2026-05-24-phase2-6-judge-robustness-ii/`.
 
 ---
 

@@ -1,0 +1,15 @@
+{
+  "gold_set_588": {
+    "alpha_3way_full": 0.3643394082657071,
+    "n": 588
+  },
+  "expand_pool_universe": {
+    "alpha_3way_full": 0.2991995851948156,
+    "n": 4973
+  },
+  "expand_pool_pairwise": {
+    "mini_vs_llama": 0.11662533066023839,
+    "mini_vs_qwen": 0.20408557185177245,
+    "llama_vs_qwen": 0.601315070377979
+  }
+}

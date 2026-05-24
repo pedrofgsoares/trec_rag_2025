@@ -50,6 +50,15 @@ _PRICES: dict[str, tuple[float, float]] = {
     # we record Groq's list price for cost accounting and HF may charge a
     # small markup on top. Treat the displayed $ as ±10% accurate.
     "hf-llama-3.3-70b":       (0.59, 0.79),
+    # Phase 2.6 §2: third independent judge via HF Inference Providers.
+    # Design D1 originally specified Mixtral-8x7B, but HF Providers removed
+    # all Mistral-family models from the chat-routable roster in 2026-Q2;
+    # Together-direct hit a 402 (credit exhausted) on the same model. The
+    # pivot is Qwen2.5-72B-Instruct (Alibaba dense 72B, routed by HF to
+    # OpenRouter). Same design intent — third family distinct from
+    # OpenAI/Meta. Public price ~$0.90/M tokens on OpenRouter as of
+    # May 2026; treat ±20% accurate (provider-pass-through pricing).
+    "hf-qwen-2.5-72b":        (0.90, 0.90),
 }
 
 
@@ -387,6 +396,42 @@ class HFLlama70B(HTTPBackend):
         )
 
 
+class HFQwen72B(HTTPBackend):
+    """HuggingFace Inference Providers router → Qwen2.5-72B-Instruct.
+
+    Third independent judge for the Phase 2.6 three-way intersection pool.
+    Qwen2.5-72B is an Alibaba-trained dense 72B model — a model family
+    distinct from both OpenAI's GPT-4 line (``openai-mini``) and Meta's
+    Llama-3 line (``together``, ``hf-llama``). Adding it gives a coordinate
+    to separate "model-family effect" from "true label ambiguity" on the
+    contradict class, where mini-cot vs Llama-70B-cot agreement was 0.12
+    Jaccard in Phase 2.5.
+
+    *Pivot note (2026-05-23):* Design D1 originally chose Mixtral-8x7B for
+    this slot. At implementation time HF Providers had removed all Mistral
+    models from the chat-routable roster (400 "not a chat model"), and the
+    Together-direct fallback returned 402 (credit exhausted). Qwen2.5-72B
+    is the equivalent-intent substitute that *is* actually available on
+    HF Providers (routed by HF to OpenRouter). See proposal §pivot.
+
+    Uses the same HF Provider router as :class:`HFLlama70B`; ``HF_PROVIDER``
+    pins the upstream (e.g. ``:openrouter``, ``:hyperbolic``) if needed.
+    """
+
+    def __init__(self, *, prompt_mode: PromptMode = "strict") -> None:
+        provider = os.environ.get("HF_PROVIDER", "").strip()
+        model = "Qwen/Qwen2.5-72B-Instruct"
+        if provider:
+            model = f"{model}:{provider}"
+        super().__init__(
+            name="hf-qwen-2.5-72b",
+            model=model,
+            base_url="https://router.huggingface.co/v1",
+            api_key_env="HF_TOKEN",
+            prompt_mode=prompt_mode,
+        )
+
+
 class RecordedBackend(Backend):
     """In-memory backend used by the test suite.
 
@@ -434,6 +479,10 @@ BACKEND_REGISTRY: dict[str, type[Backend]] = {
     # Same model weights as `together`; only the hosting / billing route
     # is different. Use when Together's prepaid balance is unreachable.
     "hf-llama": HFLlama70B,
+    # Phase 2.6: third independent judge for the three-way intersection
+    # pool. Qwen2.5-72B-Instruct via HF Providers (pivot from Mixtral —
+    # HF Providers no longer routes Mistral family; see HFQwen72B docstring).
+    "qwen": HFQwen72B,
 }
 
 

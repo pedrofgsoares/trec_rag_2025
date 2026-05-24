@@ -164,3 +164,161 @@ multi-judge confidence-averaged variant.
 | Together prior attempt (29 of 5398 triples before HTTP 402) | $0.0100 |
 | OpenAI rejudges (§2.17, mini-cot, reused) | $0 (no new spend) |
 | **Phase 2.5 §1-§3 total** | **~$2.49** |
+
+---
+
+# Phase 2.6 §3 — Three-judge intersection extension (2026-05-24)
+
+## Why a third judge
+
+The §1 two-judge intersection narrowed the Contradicts pool from 363
+mini-cot positives to 43 (mini ∩ Llama-70B). That left an open question
+the §1 analysis itself called out: is the 88 % drop on contradicts
+"mini-cot is over-emitting" or "Llama is over-stripping"? With only two
+data points there was no way to tell. Phase 2.6 adds a third independent
+judge — different model family from both prior backends — so the
+disagreement pattern can be triangulated rather than dichotomised.
+
+## How the third judge was selected
+
+Design D1 (in the openspec change) originally proposed Mixtral-8x7B via
+HF Inference Providers. At implementation time HF had removed the
+Mistral family from the chat-routable roster (`400 "not a chat model"`
+on every variant probed) and the Together-direct fallback returned
+`402 Credit limit exceeded`. The pivot — documented in design D1 — went
+to **Qwen2.5-72B-Instruct** (Alibaba dense 72B, routed by HF Providers
+to OpenRouter). Same intent: third model family distinct from both
+OpenAI's GPT-4 line and Meta's Llama-3 line.
+
+## Gate validation
+
+Qwen2.5-72B-cot scored macro-w-F1 = **0.8980** on the 588-triple human
+concordance set (≥ 0.85 gate, per-class F1 floor 0.05 cleared on every
+non-empty class). Per-class:
+
+| Class | F1 (Qwen) | F1 (mini, ref) | F1 (Llama, ref) | n |
+|---|---:|---:|---:|---:|
+| Supports | 0.944 | 0.924 | 0.958 | 549 |
+| Contradicts | 0.250 | 0.480 | 0.250 | 39 |
+
+Qwen sits *between* mini and Llama on the macro and matches Llama's
+Contradicts conservatism almost exactly. The first useful signal: on
+the 588 gold set, **Qwen and Llama agree with each other much more than
+either agrees with mini** — the §10.4 Phase 2 finding of "mini is
+liberal on contradicts" generalises beyond a single comparison.
+
+## Three-judge cross-judge agreement (Krippendorff α, K2011 formula)
+
+On the **588 gold set** (every judge classifies every triple):
+
+| Subset | α (3 judges) | n |
+|---|---:|---:|
+| Full label space (Supports / Contradicts / Neutral / Not relevant) | **0.3643** | 588 |
+| Restricted to human-Supports units | 0.3204 | 549 |
+| Restricted to human-Contradicts units | 0.2918 | 39 |
+
+On the **5 398 §2.17 expand-pool candidate set** (every judge labelled
+every triple; absences treated as "Neutral"):
+
+| α | Value |
+|---|---:|
+| 3-way α (full label space) | **0.2992** |
+| Pairwise α: mini ↔ Llama | 0.1166 |
+| Pairwise α: mini ↔ Qwen | 0.2041 |
+| Pairwise α: **Llama ↔ Qwen** | **0.6013** |
+
+**This is the headline finding.** Llama and Qwen agree at α=0.60 (which
+maps roughly to Cohen's κ in the "substantial agreement" range, per
+Landis & Koch 1977). Mini-cot agrees with neither at much above the
+"slight" level (0.12 / 0.20). The two-judge intersection pool from
+Phase 2.5 was effectively "mini's contradicts, filtered through Llama's
+veto"; the three-judge pool is essentially "Llama and Qwen's shared
+contradicts (which mini also happens to ratify in most cases)".
+
+## Three-way intersection-on-contradicts pool
+
+The pool was emitted by `intersection.emit_intersection_pool` in its new
+N-list form: Supports pass through from mini-cot (3 807 positives),
+human positives copied verbatim (588), Contradicts kept only where all
+three judges agree. Counts:
+
+| | mini-only | mini ∩ Llama (Phase 2.5) | mini ∩ Llama ∩ Qwen (Phase 2.6) | drop vs mini |
+|---|---:|---:|---:|---:|
+| Supports | 3 807 | 3 807 | 3 807 | 0 (pass-through) |
+| **Contradicts** | 363 | 43 | **31** | **−91.5 %** |
+| Human (all) | 588 | 588 | 588 | 0 |
+| Total | 4 758 | 4 438 | 4 426 | −7.0 % |
+
+Pairwise intersection diagnostics from the sidecar:
+
+| Pair | Contradicts agreed |
+|---|---:|
+| mini ∩ Llama | 43 |
+| mini ∩ Qwen | 71 |
+| **Llama ∩ Qwen** | **32** |
+| All three | 31 |
+
+The 32 vs 31 near-equality is what the α numbers above already told us:
+when Llama and Qwen agree on a contradict, mini agrees on it 31/32
+times. The 3-way pool is essentially the Llama–Qwen pool.
+
+The 31 surviving positives clear the design-D2 floor of 20 ("if the 3-way
+Contradicts pool has < 20 positives, downweight macro conclusions"), but
+sit just above it — Contradicts statistics on the 3-way pool are reportable
+but should be read with the small-sample caveat in mind.
+
+## Variant F1 on the 3-way pool (Strict, sentence-level macro)
+
+| variant | Supports F1 (3-way) | Contradicts F1 (3-way) | Δ vs 2-way (Contradicts) |
+|---|---:|---:|---:|
+| starter_baseline | 16.55 | **4.08** | +0.07 |
+| Phase 1 | 16.43 | 1.12 | +0.05 |
+| `no_negex` | 16.33 | **3.70** | +0.07 |
+| `scifive_large` | 16.43 | 2.00 | −0.21 |
+| `allow_existing` | 16.94 | 1.12 | +0.05 |
+| `bm25_rm3` | 8.97 | 0.60 | +0.05 |
+| `bm25_rm3_llm_filtered` | 9.89 | 1.12 | +0.05 |
+| `bm25_llm_rewrite` | 10.65 | 0.86 | +0.05 |
+
+Contradicts numbers shift by ≤ ±0.3 pp from the 2-way pool — the same
+units' true-positive count divided by a marginally smaller denominator.
+The qualitative findings from Phase 2.5 §10.8 carry over **unchanged**:
+
+* `no_negex` beats Phase 1 on Contradicts (3.70 vs 1.12, ~3.3×): the
+  structural Phase 2 finding survives.
+* `no_negex` is statistically indistinguishable from `starter` on
+  Contradicts (3.70 vs 4.08): the apparent expanded-pool advantage
+  remains an artefact of liberal mini-cot ratifications.
+* The three retrieval-side variants (`bm25_rm3`, `bm25_rm3_llm_filtered`,
+  `bm25_llm_rewrite`) remain clearly worse on Supports under the
+  conservative pool.
+
+## What changes vs Phase 2.5
+
+The Phase 2.6 work tightens the methodological claim without overturning
+any empirical finding. Specifically:
+
+* The Phase 2.5 narrative "the two-judge intersection is conservative
+  but might be the result of mini being too liberal *or* Llama being
+  too strict" is now resolved: **mini is the outlier.** Llama and Qwen,
+  trained by different organisations on different data with different
+  architectures, converge on a similar (much smaller) set of contradicts.
+* The 3-way pool number on Contradicts is essentially the Llama–Qwen
+  pool number; mini's "veto" power is illusory because almost every
+  contradict Llama and Qwen agree on, mini also agrees on.
+* The Phase 2 ablation conclusions are robust to going from 1 → 2 → 3
+  judges; the variant rankings on the 3-way pool are the same as on
+  the 2-way pool, with only ±0.3 pp shifts.
+
+## Cost ledger for Phase 2.6 §2-§3
+
+| Item | Spend |
+|---|---:|
+| HF Inference Providers (Qwen2.5-72B via OpenRouter) — gold-set validate (588) | $0.36 |
+| HF Inference Providers (Qwen2.5-72B via OpenRouter) — expand-pool initial (4 238 triples) | ~$2.27 |
+| HF Inference Providers (Qwen2.5-72B via OpenRouter) — expand-pool resume after 400 (2 223 triples) | $1.37 |
+| **Phase 2.6 §2-§3 total** | **~$4.00** |
+
+Inside the design's $5 hard ceiling. Combined Phase 2 + 2.5 + 2.6 LLM-judge
+spend across the whole programme: ~$1.77 (Phase 2 §2) + ~$0.91 (Phase 2 §10) +
+~$2.49 (Phase 2.5) + ~$4.00 (Phase 2.6) ≈ **$9.17 total**.

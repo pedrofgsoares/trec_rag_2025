@@ -58,7 +58,105 @@ DEFAULT_QRELS_PATHS: dict[str, Path] = {
     "expanded": Path("data/qrels/biogen2025_taskA_qrels_expanded.jsonl"),
     # Phase 2.5: two-judge intersection-on-contradicts pool.
     "intersection": Path("data/qrels/biogen2025_taskA_qrels_intersection.jsonl"),
+    # Phase 2.6: three-judge intersection-on-contradicts pool
+    # (mini-cot ∩ Llama-3.3-70B-cot ∩ Qwen-2.5-72B-cot).
+    "intersection-3way": Path("data/qrels/biogen2025_taskA_qrels_intersection_3way.jsonl"),
 }
+
+
+def krippendorff_alpha(
+    labels_per_coder: list[list[str | None]],
+    *,
+    classes: tuple[str, ...],
+    missing_marker: str | None = None,
+) -> float:
+    """Krippendorff's α for nominal data with N≥2 coders.
+
+    Standard formula (Krippendorff 1980, 2011; Hayes & Krippendorff 2007):
+
+        α = 1 − D_observed / D_expected
+
+    with the nominal disagreement function ``δ(c1, c2) = 0 if c1 == c2 else 1``.
+    Per-unit terms are weighted by ``m_u * (m_u - 1)`` where ``m_u`` is the
+    number of non-missing judgements on unit ``u`` (Krippendorff 2011 eq. 1) —
+    when every unit has the same number of judgements this reduces to the
+    simple formulation in Hayes & Krippendorff (2007).
+
+    ``labels_per_coder`` is a list of N lists (one per coder), all of equal
+    length U (one entry per unit). Entries equal to ``missing_marker``
+    (default ``None``) are treated as missing and dropped from the unit's
+    counts; units with fewer than 2 non-missing labels contribute zero to
+    both numerator and denominator (they carry no within-unit disagreement
+    information). In our primary use case (every backend judges every
+    triple) no missing markers appear; the parameter is exposed to support
+    published reference fixtures (e.g. Hayes & Krippendorff 2007 Table 1
+    contains 3 missing values).
+
+    Reference fixture: Hayes & Krippendorff (2007) Table 1 yields α = 0.7434
+    with three ``"*"`` entries treated as missing. The test suite anchors
+    against that value to detect any algorithmic drift.
+    """
+    if not labels_per_coder:
+        raise ValueError("labels_per_coder must contain at least one coder")
+    n_coders = len(labels_per_coder)
+    if n_coders < 2:
+        raise ValueError(f"need ≥2 coders for an inter-coder reliability metric, got {n_coders}")
+    n_units = len(labels_per_coder[0])
+    for i, lst in enumerate(labels_per_coder):
+        if len(lst) != n_units:
+            raise ValueError(
+                f"all coders must have the same number of units; "
+                f"coder 0 has {n_units}, coder {i} has {len(lst)}"
+            )
+    if n_units == 0:
+        return 1.0  # vacuously perfect agreement
+    class_set = set(classes)
+    for ci, lst in enumerate(labels_per_coder):
+        for ui, lab in enumerate(lst):
+            if lab == missing_marker:
+                continue
+            if lab not in class_set:
+                raise ValueError(
+                    f"coder {ci} unit {ui} has label {lab!r} not in classes "
+                    f"{classes} and not the missing marker {missing_marker!r}"
+                )
+
+    # Krippendorff (2011) eq. 5 + coincidence-matrix formulation: per-unit
+    # contribution to observed disagreement is (m_u² − Σ_c n_uc²) / (m_u − 1)
+    # (units with m_u < 2 contribute 0); total observed disagreement
+    # D_obs = (sum of per-unit contributions) / N where N is the total
+    # number of non-missing labels across all units.
+    obs_numerator = 0.0
+    total_label_counts: dict[str, int] = {c: 0 for c in classes}
+    for ui in range(n_units):
+        per_unit_counts: dict[str, int] = {c: 0 for c in classes}
+        for lst in labels_per_coder:
+            lab = lst[ui]
+            if lab == missing_marker:
+                continue
+            per_unit_counts[lab] += 1
+            total_label_counts[lab] += 1
+        m_u = sum(per_unit_counts.values())
+        if m_u < 2:
+            continue  # carries no within-unit disagreement information
+        m_sq = m_u * m_u
+        same_sq = sum(c * c for c in per_unit_counts.values())
+        obs_numerator += (m_sq - same_sq) / (m_u - 1)
+
+    N = sum(total_label_counts.values())
+    if N < 2:
+        return 1.0
+
+    D_obs = obs_numerator / N
+
+    # Expected disagreement under random pairing across all non-missing labels.
+    # D_exp = (N² − Σ_c n_c²) / (N · (N − 1))
+    sum_sq = sum(c * c for c in total_label_counts.values())
+    D_exp = (N * N - sum_sq) / (N * (N - 1))
+
+    if D_exp == 0:
+        return 1.0  # all non-missing labels are the same class
+    return 1.0 - (D_obs / D_exp)
 
 
 @dataclass(slots=True)
@@ -241,6 +339,8 @@ def main(argv: list[str] | None = None) -> int:
              "'expanded' = data/qrels/biogen2025_taskA_qrels_expanded.jsonl. "
              "'intersection' = data/qrels/biogen2025_taskA_qrels_intersection.jsonl "
              "(Phase 2.5: two-judge intersection-on-contradicts). "
+             "'intersection-3way' = data/qrels/biogen2025_taskA_qrels_intersection_3way.jsonl "
+             "(Phase 2.6: three-judge unanimity on contradicts). "
              "Ignored when --qrels is set.",
     )
     p.add_argument(
@@ -266,7 +366,13 @@ def main(argv: list[str] | None = None) -> int:
             "expanded": "Run `python -m trec_biogen.judge.rejudge expand-pool` first.",
             "intersection": (
                 "Run `python -m trec_biogen.judge.intersection` after producing "
-                "both backends' expanded qrels (mini-cot canonical + Together)."
+                "both backends' expanded qrels (mini-cot canonical + Together / HF-Llama)."
+            ),
+            "intersection-3way": (
+                "Run `python -m trec_biogen.judge.intersection --records-paths "
+                "biogen2025_taskA_qrels_expanded.jsonl biogen2025_taskA_qrels_expanded_hf-llama.jsonl "
+                "biogen2025_taskA_qrels_expanded_qwen.jsonl --out data/qrels/biogen2025_taskA_qrels_intersection_3way.jsonl` "
+                "after producing all three backends' expanded qrels."
             ),
         }.get(a.qrels_pool, "")
         msg = f"qrels file not found: {qrels_path}"

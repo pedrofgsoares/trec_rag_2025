@@ -44,6 +44,7 @@ class RunRow:
     official: dict | None
     expanded: dict | None
     intersection: dict | None
+    intersection_3way: dict | None
     wall_clock_s: float | None
     vram_peak_gb: float | None
     judge_cost_usd: float | None
@@ -93,6 +94,7 @@ def score_run(
     official_qrels: Path,
     expanded_qrels: Path | None,
     intersection_qrels: Path | None = None,
+    intersection_3way_qrels: Path | None = None,
 ) -> RunRow:
     submission = run_dir / "task_a_output.json"
     meta = _maybe_load_yaml(run_dir / "metadata.yaml")
@@ -108,6 +110,10 @@ def score_run(
     if intersection_qrels is not None and intersection_qrels.exists():
         int_idx = load_qrels(intersection_qrels)
         intersection = evaluate(submission, int_idx)
+    intersection_3way: dict | None = None
+    if intersection_3way_qrels is not None and intersection_3way_qrels.exists():
+        int3_idx = load_qrels(intersection_3way_qrels)
+        intersection_3way = evaluate(submission, int3_idx)
 
     return RunRow(
         variant=variant,
@@ -115,6 +121,7 @@ def score_run(
         official=official,
         expanded=expanded,
         intersection=intersection,
+        intersection_3way=intersection_3way,
         wall_clock_s=meta.get("wall_clock_seconds_total"),
         vram_peak_gb=meta.get("vram_peak_gb_total"),
         judge_cost_usd=meta.get("judge_cost_usd"),
@@ -142,21 +149,38 @@ def _fmt_opt_float(v: float | None, *, suffix: str = "") -> str:
 
 
 def render_markdown(rows: list[RunRow], *, setting: str = "strict") -> str:
-    # Whether to render the intersection-pool column at all.
+    # Whether to render the intersection-pool columns at all.
     any_intersection = any(r.intersection is not None for r in rows)
+    any_intersection_3way = any(r.intersection_3way is not None for r in rows)
+
+    # Build header dynamically based on which pools are populated.
+    cols = ["variant", "F1@official Sup / Con", "F1@expanded Sup / Con"]
     if any_intersection:
-        header = (
-            "| variant | F1@official Sup / Con | F1@expanded Sup / Con "
-            "| F1@intersection Sup / Con | Δ Sup / Con (official→expanded) "
-            "| wall-clock (s) | VRAM (GiB) | LLM-judge $ |"
+        cols.append("F1@intersection Sup / Con")
+    if any_intersection_3way:
+        cols.append("F1@intersection-3way Sup / Con")
+    cols.extend([
+        "Δ Sup / Con (official→expanded)",
+        "wall-clock (s)", "VRAM (GiB)", "LLM-judge $",
+    ])
+    header = "| " + " | ".join(cols) + " |"
+    sep = "|" + "|".join(["---"] * len(cols)) + "|"
+
+    intro_extra = []
+    if any_intersection:
+        intro_extra.append(
+            "The `intersection` pool is the Phase 2.5 two-judge "
+            "intersection-on-contradicts pool (Supports come from the "
+            "canonical mini-cot; Contradicts kept only when mini-cot and "
+            "Together-Llama-70B both label them positive)."
         )
-        sep = "|---|---|---|---|---|---|---|---|"
-    else:
-        header = (
-            "| variant | F1@official Sup / Con | F1@expanded Sup / Con "
-            "| Δ Sup / Con | wall-clock (s) | VRAM (GiB) | LLM-judge $ |"
+    if any_intersection_3way:
+        intro_extra.append(
+            "The `intersection-3way` pool is the Phase 2.6 three-judge pool "
+            "(adds Qwen-2.5-72B-cot to the intersection — Contradicts require "
+            "unanimous agreement across all three judges)."
         )
-        sep = "|---|---|---|---|---|---|---|"
+    intro_extra.append("`n/a` = the corresponding qrels file is absent.")
 
     lines = [
         f"# Phase 2 Dual-Pool Summary ({setting})",
@@ -164,14 +188,7 @@ def render_markdown(rows: list[RunRow], *, setting: str = "strict") -> str:
         "All F1 numbers are sentence-level macro under the published BioGEN "
         "2025 methodology (``unjudged_as_zero=True``). Δ columns show "
         "official → expanded (positive = pool expansion lifted the F1). "
-        + (
-            "The `intersection` pool is the Phase 2.5 two-judge "
-            "intersection-on-contradicts pool (Supports come from the "
-            "canonical mini-cot; Contradicts kept only when mini-cot and "
-            "Together-Llama-70B both label them positive). `n/a` = the "
-            "intersection qrels file is absent."
-            if any_intersection else ""
-        ),
+        + " ".join(intro_extra),
         "",
         header,
         sep,
@@ -180,25 +197,26 @@ def render_markdown(rows: list[RunRow], *, setting: str = "strict") -> str:
         off_sup, off_con = _f1_pair(r.official, setting)
         exp_sup, exp_con = _f1_pair(r.expanded, setting)
         d_sup, d_con = _delta(r.official, r.expanded, setting)
+        cells = [r.variant, f"{off_sup} / {off_con}", f"{exp_sup} / {exp_con}"]
         if any_intersection:
             if r.intersection is not None:
                 int_sup, int_con = _f1_pair(r.intersection, setting)
             else:
                 int_sup, int_con = "n/a", "n/a"
-            lines.append(
-                f"| {r.variant} | {off_sup} / {off_con} | {exp_sup} / {exp_con} "
-                f"| {int_sup} / {int_con} | {d_sup} / {d_con} "
-                f"| {_fmt_opt_float(r.wall_clock_s)} "
-                f"| {_fmt_opt_float(r.vram_peak_gb)} "
-                f"| {_fmt_opt_float(r.judge_cost_usd, suffix='')} |"
-            )
-        else:
-            lines.append(
-                f"| {r.variant} | {off_sup} / {off_con} | {exp_sup} / {exp_con} "
-                f"| {d_sup} / {d_con} | {_fmt_opt_float(r.wall_clock_s)} "
-                f"| {_fmt_opt_float(r.vram_peak_gb)} "
-                f"| {_fmt_opt_float(r.judge_cost_usd, suffix='')} |"
-            )
+            cells.append(f"{int_sup} / {int_con}")
+        if any_intersection_3way:
+            if r.intersection_3way is not None:
+                int3_sup, int3_con = _f1_pair(r.intersection_3way, setting)
+            else:
+                int3_sup, int3_con = "n/a", "n/a"
+            cells.append(f"{int3_sup} / {int3_con}")
+        cells.extend([
+            f"{d_sup} / {d_con}",
+            _fmt_opt_float(r.wall_clock_s),
+            _fmt_opt_float(r.vram_peak_gb),
+            _fmt_opt_float(r.judge_cost_usd, suffix=""),
+        ])
+        lines.append("| " + " | ".join(cells) + " |")
     lines.append("")
     lines.append(f"Generated from {len(rows)} run(s) under `runs/`.")
     return "\n".join(lines) + "\n"
@@ -301,6 +319,12 @@ def main(argv: list[str] | None = None) -> int:
              "outputs are not affected.",
     )
     p.add_argument(
+        "--intersection-3way-qrels", type=Path,
+        default=DEFAULT_QRELS_PATHS["intersection-3way"],
+        help="Phase 2.6 three-judge intersection-on-contradicts pool (mini ∩ "
+             "Llama-3.3-70B ∩ Qwen-2.5-72B). Hidden when the file is absent.",
+    )
+    p.add_argument(
         "--include", nargs="*", default=None,
         help="Substring filter on run-dir names. Default: every run with task_a_output.json.",
     )
@@ -328,6 +352,7 @@ def main(argv: list[str] | None = None) -> int:
             official_qrels=args.official_qrels,
             expanded_qrels=args.expanded_qrels,
             intersection_qrels=args.intersection_qrels,
+            intersection_3way_qrels=args.intersection_3way_qrels,
         )
         for d in run_dirs
     ]

@@ -248,3 +248,43 @@ guidance for tensor-core hardware. The variant remains one
 `bash scripts/build_dense_index.sh` away on adequate compute
 (A100/H100/L4 ≈ 1–3 h; ~$5–10 on spot pricing); the deferral is a
 hardware-budget call, not a code-readiness one.
+
+## §14 — Phase 2.6: three-judge intersection + held-out calibration ECE
+
+Phase 2.6 closed the two methodological frontiers that Phase 2.5
+sign-off explicitly flagged as open: (a) the in-sample isotonic-PAV
+ECE in §10.2 is replaced by a k=5 held-out CV estimate with folds
+split at `qa_id` boundaries (mini-cot 0.0476 ± 0.0225; Together-cot
+0.0329 ± 0.0278 — both still ≤ the Guo et al. "substantial" threshold
+of 0.05, just much closer to it than the in-sample numbers suggested);
+and (b) a third independent judge (Qwen2.5-72B-Instruct via HF
+Inference Providers, pivot from the originally-spec'd Mixtral-8x7B
+because HF Providers had dropped the Mistral family from its
+chat-routable roster at implementation time) was added to enable a
+three-way Krippendorff α and a three-judge intersection-on-contradicts
+pool.
+
+The empirical headline from the α computation is decisive: on the 5 398
+candidate set, **Llama-70B-cot and Qwen-72B-cot agree at α = 0.6013**
+("substantial"), but both agree with mini-cot at only α = 0.12 / 0.20
+("slight"). This resolves the Phase 2.5 ambiguity "mini over-emits OR
+Llama over-strips" cleanly in favour of "**mini is the outlier**".
+Llama and Qwen — trained by Meta and Alibaba respectively on different
+data with different architectures — converge on a much smaller
+contradicts set than mini ratifies.
+
+The 3-way intersection narrowed Contradicts from 363 (mini-only) → 43
+(mini ∩ Llama) → **31** (mini ∩ Llama ∩ Qwen, 91.5 % drop). Llama ∩ Qwen
+alone is 32 — essentially identical to the three-way 31, confirming the
+α reading. Re-scoring all run dirs against the 3-way pool produced
+±0.07 pp shifts on Contradicts F1 vs the 2-way pool; the Phase 2.5
+qualitative findings carry over unchanged (`no_negex` still beats Phase 1
+by ~3.3×; `no_negex` still statistically indistinguishable from `starter`).
+
+The Phase 2.6 §1-§3 spend was $4.00 (~$0.36 gold + ~$3.64 expand-pool +
+resume, after one HF Router 400 mid-run that the per-200-triple
+checkpoint absorbed cleanly). Inside the $5 hard ceiling defined in
+the openspec change. Cumulative LLM-judge spend across the whole
+programme (Phase 2 §2 $1.77 + Phase 2 §10 $0.91 + Phase 2.5 $2.49 +
+Phase 2.6 $4.00) ≈ **$9.17 total** — about three coffees, for a
+defensible three-judge methodology over a 26.8 M-doc corpus.

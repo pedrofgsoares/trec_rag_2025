@@ -86,3 +86,50 @@ def test_hf_llama_backend_honours_provider_pin(monkeypatch) -> None:
     monkeypatch.setenv("HF_TOKEN", "test")
     b = HFLlama70B(prompt_mode="cot")
     assert b._model.endswith(":sambanova")
+
+
+# ---------------------------------------------------------------------------
+# Phase 2.6 §2.6 — Qwen2.5-72B backend smoke (pivot from Mixtral per D1)
+# ---------------------------------------------------------------------------
+
+
+def test_qwen_uses_per_backend_filename() -> None:
+    """`expand-pool --backend qwen` MUST default to its own qrels file so
+    a qwen rejudge does not overwrite the canonical mini-cot expanded
+    qrels (the byte-for-byte Phase 2.5 invariant)."""
+    out = _default_expanded_out_for_backend("qwen")
+    assert out == Path("data/qrels/biogen2025_taskA_qrels_expanded_qwen.jsonl"), (
+        "qwen must default to its own per-backend filename so it doesn't "
+        "overwrite the canonical mini-cot or any other backend's pool"
+    )
+
+
+def test_qwen_backend_resolves_and_pins_model() -> None:
+    """The `qwen` registry entry resolves to the Qwen2.5-72B-Instruct model
+    via the HF Inference Providers router. Pivot from D1's original
+    Mixtral-8x7B (HF removed Mistral family from the chat-routable roster)."""
+    from trec_biogen.judge.backends import HFQwen72B, make_backend
+    import os
+    saved = os.environ.pop("HF_TOKEN", None)
+    try:
+        os.environ["HF_TOKEN"] = "test"
+        b = make_backend("qwen", prompt_mode="cot")
+        assert isinstance(b, HFQwen72B)
+        assert b.name == "hf-qwen-2.5-72b"
+        assert "Qwen2.5-72B-Instruct" in b._model
+        assert b._base_url == "https://router.huggingface.co/v1"
+    finally:
+        if saved is not None:
+            os.environ["HF_TOKEN"] = saved
+        else:
+            os.environ.pop("HF_TOKEN", None)
+
+
+def test_qwen_backend_honours_provider_pin(monkeypatch) -> None:
+    """Same `HF_PROVIDER` env-var convention as `hf-llama` — appended to
+    the model id."""
+    from trec_biogen.judge.backends import HFQwen72B
+    monkeypatch.setenv("HF_PROVIDER", "openrouter")
+    monkeypatch.setenv("HF_TOKEN", "test")
+    b = HFQwen72B(prompt_mode="cot")
+    assert b._model.endswith(":openrouter")

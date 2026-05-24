@@ -175,6 +175,129 @@ def test_sidecar_metadata_is_exhaustive(tmp_path: Path) -> None:
     assert meta["incomplete"] is False
 
 
+# ---------------------------------------------------------------------------
+# Phase 2.6 §3 — N-way generalisation tests
+# ---------------------------------------------------------------------------
+
+
+def test_three_input_intersection_keeps_only_unanimous_contradicts(tmp_path: Path) -> None:
+    """Contradict on (Q1,0,P1) is endorsed by all 3 → kept.
+    Contradict on (Q1,0,P2) is endorsed by only 2/3 → dropped.
+    Contradict on (Q1,0,P3) is endorsed by only 1/3 → dropped.
+    Supports come from records_paths[0] (canonical).
+    """
+    human = _write_jsonl(tmp_path / "human.jsonl", [])
+    a = _write_jsonl(tmp_path / "a.jsonl", [
+        _llm_row("Q1", 0, "P1", "contradict", "llm-mini"),
+        _llm_row("Q1", 0, "P2", "contradict", "llm-mini"),
+        _llm_row("Q1", 0, "P3", "contradict", "llm-mini"),
+        _llm_row("Q1", 0, "P4", "support", "llm-mini"),
+    ])
+    b = _write_jsonl(tmp_path / "b.jsonl", [
+        _llm_row("Q1", 0, "P1", "contradict", "llm-llama"),
+        _llm_row("Q1", 0, "P2", "contradict", "llm-llama"),
+    ])
+    c = _write_jsonl(tmp_path / "c.jsonl", [
+        _llm_row("Q1", 0, "P1", "contradict", "llm-qwen"),
+    ])
+    out = tmp_path / "intersection_3way.jsonl"
+    meta = emit_intersection_pool([a, b, c], human_qrels_path=human, out_path=out)
+    rows = _read_jsonl(out)
+    contradict_pmids = {r["pmid"] for r in rows if r["class"] == "contradict"}
+    support_pmids = {r["pmid"] for r in rows if r["class"] == "support"}
+    assert contradict_pmids == {"P1"}, "only unanimously-endorsed contradicts survive"
+    assert support_pmids == {"P4"}, "support from records_paths[0] passes through"
+    assert meta["before_intersection"]["contradict"] == 3
+    assert meta["after_intersection"]["contradict"] == 1
+    # Pairwise intersection diagnostics are populated for N≥3.
+    assert len(meta["pairwise_contradict_intersections"]) == 3  # (a∩b, a∩c, b∩c)
+
+
+def test_supports_source_index_swaps_supports_input(tmp_path: Path) -> None:
+    """With supports_source_index=1 the Supports come from records_paths[1]
+    instead of records_paths[0]."""
+    human = _write_jsonl(tmp_path / "human.jsonl", [])
+    a = _write_jsonl(tmp_path / "a.jsonl", [
+        _llm_row("Q1", 0, "P-from-A", "support", "llm-mini"),
+        _llm_row("Q1", 0, "P1", "contradict", "llm-mini"),
+    ])
+    b = _write_jsonl(tmp_path / "b.jsonl", [
+        _llm_row("Q1", 0, "P-from-B", "support", "llm-llama"),
+        _llm_row("Q1", 0, "P1", "contradict", "llm-llama"),
+    ])
+    out = tmp_path / "intersection.jsonl"
+    emit_intersection_pool([a, b], human_qrels_path=human, out_path=out,
+                           supports_source_index=1)
+    rows = _read_jsonl(out)
+    support_pmids = {r["pmid"] for r in rows if r["class"] == "support"}
+    assert support_pmids == {"P-from-B"}, (
+        "with supports_source_index=1, supports come from records_paths[1]"
+    )
+
+
+def test_supports_source_index_out_of_range_raises(tmp_path: Path) -> None:
+    """Out-of-range index must raise ValueError *before* any file I/O."""
+    import pytest
+    # Non-existent paths — if validation happens after file read, this would
+    # blow up with FileNotFoundError instead of ValueError.
+    a = tmp_path / "does_not_exist_a.jsonl"
+    b = tmp_path / "does_not_exist_b.jsonl"
+    human = tmp_path / "does_not_exist_human.jsonl"
+    out = tmp_path / "out.jsonl"
+    with pytest.raises(ValueError, match="supports_source_index"):
+        emit_intersection_pool([a, b], human_qrels_path=human,
+                               out_path=out, supports_source_index=5)
+    with pytest.raises(ValueError, match="supports_source_index"):
+        emit_intersection_pool([a, b], human_qrels_path=human,
+                               out_path=out, supports_source_index=-1)
+
+
+def test_incomplete_flag_propagates_from_any_of_n_inputs(tmp_path: Path) -> None:
+    """With N=3, an incomplete sidecar on any one input flips the output."""
+    human = _write_jsonl(tmp_path / "human.jsonl", [])
+    a = _write_jsonl(tmp_path / "a.jsonl", [
+        _llm_row("Q1", 0, "P1", "contradict", "llm-mini"),
+    ])
+    b = _write_jsonl(tmp_path / "b.jsonl", [
+        _llm_row("Q1", 0, "P1", "contradict", "llm-llama"),
+    ])
+    c = _write_jsonl(tmp_path / "c.jsonl", [
+        _llm_row("Q1", 0, "P1", "contradict", "llm-qwen"),
+    ])
+    # Mark C's sidecar incomplete.
+    c_sidecar = c.with_suffix(c.suffix + ".meta.json")
+    c_sidecar.write_text(json.dumps({"incomplete": True}), encoding="utf-8")
+
+    out = tmp_path / "intersection_3way.jsonl"
+    emit_intersection_pool([a, b, c], human_qrels_path=human, out_path=out)
+    meta = json.loads((out.with_suffix(out.suffix + ".meta.json")).read_text())
+    assert meta["incomplete"] is True
+
+
+def test_two_input_call_reproduces_phase25_pool_byte_for_byte(tmp_path: Path) -> None:
+    """Regenerating the Phase 2.5 two-judge intersection pool with the new
+    list-form API must produce the exact same JSONL file as the archived
+    one. This is the structural invariant: Phase 2.6's N-way generalisation
+    must not silently shift any byte of the Phase 2.5 output.
+    """
+    import os
+    repo_root = Path(__file__).resolve().parents[1]
+    canonical = repo_root / "data/qrels/biogen2025_taskA_qrels_expanded.jsonl"
+    llama = repo_root / "data/qrels/biogen2025_taskA_qrels_expanded_hf-llama.jsonl"
+    human = repo_root / "data/qrels/biogen2025_taskA_qrels.jsonl"
+    archived = repo_root / "data/qrels/biogen2025_taskA_qrels_intersection.jsonl"
+    if not all(p.exists() for p in (canonical, llama, human, archived)):
+        import pytest
+        pytest.skip("Phase 2.5 archived inputs not available in this checkout")
+
+    out = tmp_path / "intersection_regen.jsonl"
+    # New list-form API.
+    emit_intersection_pool([canonical, llama], human_qrels_path=human, out_path=out)
+    assert out.read_bytes() == archived.read_bytes(), (
+        "N-way generalisation broke the Phase 2.5 byte-for-byte invariant"
+    )
+
+
 def test_incomplete_flag_propagates_from_either_input(tmp_path: Path) -> None:
     human = _write_jsonl(tmp_path / "human.jsonl", [])
     a = _write_jsonl(tmp_path / "a.jsonl", [
