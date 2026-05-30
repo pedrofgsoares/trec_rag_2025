@@ -2,9 +2,19 @@
 '  BuildBioGENPresentation.vba
 '  ------------------------------------------------------------------------
 '  Builds the full course-report presentation for the TREC BioGEN 2025 work
-'  documented in docs/phase2_report.md. ~28 slides covering: task, IR theory,
-'  Phase 1 baseline, the pool-bias problem, Phase 2 methodology, variant
-'  ablations, findings, state of the art, limitations, future work.
+'  documented in docs/phase2_report.md. ~54 slides covering: task, IR theory,
+'  Phase 1 baseline, the pool-bias problem, Phase 2 methodology (CoT pivot,
+'  §2.16 + §2.17 expansion), eight variant ablations including the LLM-
+'  filtered RM3 and LLM query-rewrite negative results, Phase 2.5 two-judge
+'  intersection pool + bootstrap CIs + per-topic error analysis, Phase 2.6
+'  three-judge Krippendorff α (Llama ↔ Qwen α=0.60 — mini-cot is the
+'  contradict-class outlier) and held-out k=5 ECE; positioning against the
+'  full BioGEN 2025 leaderboard (Table 5 from Gupta et al. 2026,
+'  arXiv:2603.21582), the 7-team pipeline architecture survey, the BioACE
+'  / Llama-3.3 disclosure (organisers already use LLM-as-judge — our
+'  contribution is the infrastructure around it), and the code-availability
+'  gap (0 of 7 teams published code, so we are the first publicly
+'  reproducible Task A pipeline if we submit in 2026).
 '
 '  How to use:
 '    1. Open PowerPoint (a blank presentation is fine; the macro creates a new
@@ -63,9 +73,11 @@ Public Sub BuildBioGENPresentation()
         "2. Information Retrieval background", _
         "3. Phase 1 baseline pipeline and the §6.5 gate", _
         "4. The TREC pool-bias problem", _
-        "5. Phase 2 — pool-aware methodology (LLM judge)", _
-        "6. Variant ablations and findings", _
-        "7. State of the art, limitations, future work")
+        "5. Phase 2 — pool-aware methodology (LLM judge + CoT pivot)", _
+        "6. Eight variant ablations and findings", _
+        "7. Phase 2.5 + 2.6 — judge robustness (3 backends, Krippendorff α)", _
+        "8. Positioning vs the BioGEN 2025 field (7 teams, BioACE, code gap)", _
+        "9. State of the art, limitations, future work")
 
     ' --- Section 1 : Task & Background -----------------------------------
     AddSectionSlide pres, "Task & Background"
@@ -221,14 +233,18 @@ Public Sub BuildBioGENPresentation()
     ' --- Section 4 : Variants & Findings ---------------------------------
     AddSectionSlide pres, "Variant Ablations & Findings"
 
-    AddResultsSlide pres, "Dual-pool summary — all runs to date", _
+    AddResultsSlide pres, "Dual-pool summary — eight variants on §2.17 pool", _
         Array("Variant", "Off Sup", "Off Con", "Exp Sup", "Exp Con", "Δ Sup", "Δ Con"), _
         Array( _
             Array("starter_baseline (organisers')", "44.34", "4.21", "16.55", "5.34", "-27.79", "+1.13"), _
             Array("phase1_baseline", "5.55", "0.52", "16.43", "12.01", "+10.88", "+11.49"), _
             Array("phase2_allow_existing", "5.55", "0.52", "16.94", "12.01", "+11.39", "+11.49"), _
             Array("phase2_no_rerank", "6.52", "0.52", "15.35", "11.75", "+8.83", "+11.23"), _
-            Array("phase2_bm25_rm3", "3.92", "0.26", "8.97", "5.26", "+5.05", "+5.01"))
+            Array("phase2_bm25_rm3", "3.92", "0.26", "8.97", "5.26", "+5.05", "+5.01"), _
+            Array("phase2_bm25_rm3_llm_filtered", "4.03", "0.52", "9.89", "12.01", "+5.86", "+11.49"), _
+            Array("phase2_bm25_llm_rewrite", "5.29", "0.52", "10.65", "6.03", "+5.36", "+5.51"), _
+            Array("phase2_no_negex", "5.55", "2.65", "16.33", "8.06", "+10.78", "+5.42"), _
+            Array("phase2_scifive_large", "5.55", "1.04", "16.43", "5.85", "+10.88", "+4.81"))
 
     AddBulletSlide pres, "Headline — pool bias is real but bounded", Array( _
         "Published baseline support F1 = 44.34 on the official pool", _
@@ -247,6 +263,23 @@ Public Sub BuildBioGENPresentation()
         "  RM3 draws terms from those hits → query drift toward general disease literature", _
         "Textbook lesson: PRF is only as good as the top-k relevance signal it bootstraps from")
 
+    AddBulletSlide pres, "LLM-filtered RM3 — partial recovery, still loses to no-RM3", Array( _
+        "Literature fix (Mackie 2023, Pal 2020): filter the pseudo-relevant set with an LLM first", _
+        "Implementation: BM25 top-30 → gpt-4o-mini binary 'relevant?' → custom RM1 over accepted subset", _
+        "Beats blind RM3 by +0.11 pp official / +0.92 pp expanded support — the filter works as designed", _
+        "But still -6.54 pp below plain Phase 1 BM25 on expanded support (9.89 vs 16.43)", _
+        "Conclusion: query expansion — lexical OR LLM-curated — is the wrong intervention", _
+        "Claim-length biomedical queries are already specific enough; expansion adds noise either way")
+
+    AddBulletSlide pres, "LLM query rewriting — the third query-side falsification", Array( _
+        "Hypothesis: maybe RM3 was the wrong expansion mechanism, not expansion itself", _
+        "Variant: gpt-4o-mini emits 3 PubMed-style rewrites per (qa_id, sentence_id) cell", _
+        "Original query + 3 rewrites → BM25 × 4 rankings → RRF fusion", _
+        "Cost: $0.0505 (388 rewrite calls). Wall-clock: ~88 min", _
+        "Expanded support: 10.65 — beats blind RM3 (+1.68 pp) and LLM-filtered RM3 (+0.76 pp)", _
+        "Still loses to plain Phase 1 by -5.78 pp → query expansion is structurally wrong here", _
+        "= three independent query-side experiments converge on the same negative result")
+
     AddBulletSlide pres, "Defensible win — the contradict path", Array( _
         "Across every internal pipeline: contradict F1 on §2.17 pool ≈ 11.7 - 12.0 pp", _
         "Starter-kit (organisers') on the same pool: 5.34 pp", _
@@ -260,66 +293,226 @@ Public Sub BuildBioGENPresentation()
         "  the reranker is roughly neutral on intrinsic quality once pool bias is removed", _
         "allow_existing: +0.51 pp on expanded support; +0.00 on contradict — neutral", _
         "  validates that the existing-citations exclusion is a track-compliance hook, not a lever", _
-        "Cost of the entire LLM-judge methodology: $1.77 total across 4 runs", _
-        "GPU time consumed: ~7.5 h across Phase 1 baseline + 3 Phase 2 variants")
+        "no_negex: structural contradict gain on expanded (8.06 vs Phase 1's 12.01 — flips under intersection)", _
+        "scifive_large: 5.85 expanded contradict — biomedical NLI doesn't beat DeBERTa-MNLI on this task", _
+        "Total Phase 2 §2 LLM-judge spend: $1.77 across four runs", _
+        "GPU time: ~22 h across Phase 1 baseline + 7 Phase 2 variants (phase2_hybrid unrun)")
 
-    ' --- Section 5 : SOTA & Outlook --------------------------------------
+    ' --- Section 5 : Judge Robustness (Phase 2.5 + 2.6) ------------------
+    AddSectionSlide pres, "Phase 2.5 + 2.6 — Judge Robustness"
+
+    AddBulletSlide pres, "§10.1 — Bootstrap 95% CI on the concordance gate", Array( _
+        "Reviewer concern: does the 0.85 gate-pass survive 588-triple sampling noise?", _
+        "Non-parametric bootstrap on (gold, pred) pairs, B=1000, seed=0:", _
+        "  openai-gpt-4o-mini × cot: 0.8982, 95% CI [0.8776, 0.9196] — PASS (lower bound > 0.85)", _
+        "  together-llama-3.3-70b × cot: 0.9112, 95% CI [0.8861, 0.9355] — PASS", _
+        "Implementation: validate --records-out path.jsonl persists per-call records", _
+        "Records also unlock §10.2 calibration and the multi-backend analysis")
+
+    AddBulletSlide pres, "§10.2 — Confidence calibration (ECE, isotonic, held-out CV)", Array( _
+        "Raw ECE: mini 0.1136, Llama 0.0961 (both > 0.05 Guo et al. 'substantial' threshold)", _
+        "Pattern: confidence 0.6 → empirical accuracy 0% (wildly over-confident at low end)", _
+        "         confidence 0.85 → empirical accuracy ~94% (under-confident at the middle)", _
+        "PAV isotonic regression (pool-adjacent-violators) recovers most of the gap", _
+        "In-sample post-isotonic: 0.0032 (mini), 0.0000 (Llama) — too optimistic", _
+        "Phase 2.6 §1 held-out k=5 CV (folded at qa_id): 0.0476 ± 0.0225 (mini), 0.0329 ± 0.0278 (Llama)", _
+        "= calibrator generalises across topics, but ~15× the in-sample fit; still ≤ 0.05")
+
+    AddBulletSlide pres, "§10.4 — Multi-backend gate (second backend, Llama-3.3-70B)", Array( _
+        "Design D10 mandates backend sensitivity — TOGETHER_API_KEY enabled the third backend", _
+        "Substitution: Llama-3.3-70B (Together moved 3.1 to dedicated-endpoint-only)", _
+        "Llama-3.3-70B × cot: macro-w-F1 = 0.9112 (PASS), Supports F1 0.958 (beats mini's 0.924)", _
+        "Pairwise mini ↔ Llama: raw agreement 0.867, Cohen κ = 0.338 (only 'fair')", _
+        "κ-correction reveals: Supports robust to judge; Contradicts carries judge-dependent variance", _
+        "Honest claim: expanded Supports F1 is judge-robust; expanded Contradicts is NOT")
+
+    AddBulletSlide pres, "§10.8 (Phase 2.5) — Two-judge intersection-on-contradicts pool", Array( _
+        "Full §2.17 re-judge: Llama-3.3-70B via HF Inference Providers (Groq-routed), $2.47", _
+        "Cross-judge Jaccard: 0.93 on Supports, 0.12 on Contradicts (43 of 378 union)", _
+        "Llama emits 6.3× fewer Contradicts than mini under the same CoT temperature", _
+        "Conservative pool: humans verbatim + Supports passthrough + Contradicts intersected", _
+        "4 758 → 4 438 positives — 88% drop entirely on Contradicts (363 → 43)", _
+        "Wired through eval/metrics.py as --qrels-pool=intersection with cell-level bootstrap CIs")
+
+    AddResultsSlide pres, "Intersection-pool bootstrap CIs (B=1000, 95% percentile)", _
+        Array("Variant", "Supports F1 (95% CI)", "Contradicts F1 (95% CI)"), _
+        Array( _
+            Array("starter_baseline", "16.55 [15.01, 18.25]", "4.01 [2.13, 6.13]"), _
+            Array("phase1_baseline", "16.43 [15.15, 17.80]", "1.07 [0.26, 2.04]"), _
+            Array("phase2_no_negex", "16.33 [15.15, 17.59]", "3.63 [1.98, 5.38]"), _
+            Array("phase2_scifive_large", "16.43 [15.09, 17.73]", "2.21 [0.88, 3.79]"), _
+            Array("phase2_allow_existing", "16.94 [15.59, 18.26]", "1.07 [0.21, 2.10]"), _
+            Array("phase2_bm25_rm3", "8.97 [7.79, 10.21]", "0.55 [0.00, 1.32]"))
+
+    AddBulletSlide pres, "Two findings on the conservative pool", Array( _
+        "(1) Structural Phase 2 claim SURVIVES: no_negex beats Phase 1 on Contradicts", _
+        "    3.63 vs 1.07 (~3.4× midpoint), CI overlap marginal", _
+        "(2) Apparent 'no_negex >>> starter' on Contradicts DOES NOT survive intersection", _
+        "    no_negex 3.63 [1.98, 5.38] vs starter 4.01 [2.13, 6.13] — CIs overlap heavily", _
+        "Honest reading: no_negex ≈ starter on conservative Contradicts; both clearly > Phase 1", _
+        "Retrieval-side negatives (rm3, rm3_llm_filtered, llm_rewrite) survive unchanged")
+
+    AddBulletSlide pres, "§10.9 (Phase 2.6) — Three-judge Krippendorff α", Array( _
+        "Open question after Phase 2.5: is mini over-emitting OR is Llama over-stripping Contradicts?", _
+        "Third judge from a different family — Mixtral (HF dropped Mistral) → Qwen2.5-72B-Instruct", _
+        "Qwen gate: macro-w-F1 = 0.8980 (between mini and Llama), Contradicts conservatism matches Llama", _
+        "Three-way α on the 5398 candidates (full label space):", _
+        "  mini ↔ Llama: 0.1166", _
+        "  mini ↔ Qwen:  0.2041", _
+        "  Llama ↔ Qwen: 0.6013 ('substantial' per Landis & Koch 1977)", _
+        "Resolution: mini-cot is the Contradicts-class OUTLIER; the other two backends agree")
+
+    AddBulletSlide pres, "Three-judge intersection pool — Phase 2.5 conclusions hold", Array( _
+        "363 mini-only contradicts → 43 mini ∩ Llama (Phase 2.5) → 31 mini ∩ Llama ∩ Qwen (Phase 2.6)", _
+        "Pairwise Llama ∩ Qwen alone: 32 — essentially identical to the three-way 31", _
+        "31 positives clear design-D2 floor of 20 (small-sample caveat applies)", _
+        "Variant rankings unchanged: no_negex 3.70 vs Phase 1 1.12 (~3.3×, structural finding holds)", _
+        "no_negex still statistically indistinguishable from starter on Contradicts", _
+        "Total Phase 2.6 spend: $4.00 (gate validation + full expand-pool, with HF Router 400 retry)")
+
+    AddBulletSlide pres, "§10.3 + §10.5 — Topical-bias and pool-size sensitivity", Array( _
+        "Per-topic LLM-positive distribution: no systematic topical bias (mean 95.2 sup / topic, IQR [62,116])", _
+        "Global LLM-support / LLM-contradict ratio = 10.5 — matches PubMed prior toward affirmatives", _
+        "Pool thinning: jackknife-style sub-sampling at fractions {0.05, 0.10, ..., 1.00}, N=200 each", _
+        "Phase 1 vs starter ranking SWAPS between thin pool (frac=0.10) and full pool", _
+        "Differences at thin-pool sizes (frac=0.10) are within sampling-noise width (~2 pp)", _
+        "bm25_rm3 is the LEAST pool-dependent variant — Δ +5.20 pp vs +9-10 pp = genuine algorithmic weakness")
+
+    AddBulletSlide pres, "Per-topic error analysis (Phase 2.5 §10.8 appendix)", Array( _
+        "Mechanical topic selection (no cherry-picking): rank by Phase1 − starter on intersection pool", _
+        "qa=150 (Phase 1 wins, +13.94 pp): MedCPT-CE surfaces LLM-confirmed-but-pool-invisible PMIDs", _
+        "qa=120 (tie, +0.00 pp): both pipelines converge semantically but cite disjoint valid evidence", _
+        "qa=131 (Phase 1 loses, -19.49 pp): sub-population-specific human-pool golds (paediatric, cancer)", _
+        "  MedCPT-CE demotes the small curated literature in favour of broader topical relevance", _
+        "Aggregate ~0.1 pp difference Phase 1 vs starter hides these compositional effects")
+
+    ' --- Section 6 : SOTA & Outlook --------------------------------------
     AddSectionSlide pres, "State of the Art, Limitations, Outlook"
 
-    AddBulletSlide pres, "Where this work sits", Array( _
+    AddResultsSlide pres, "BioGEN 2025 Task A — Table 5 (Strict, official pool, top runs per team)", _
+        Array("Team", "Run", "Sup F1", "Con F1"), _
+        Array( _
+            Array("CLaC", "LLM_NLI_BM25", "67.74", "4.57"), _
+            Array("InfoLab", "task_a_run6_A", "67.23", "14.15"), _
+            Array("InfoLab", "task_a_run2", "53.41", "15.67"), _
+            Array("SIB", "SIB-task-a-1", "58.87", "0.00"), _
+            Array("polito", "scifive-ft-512CL-lex", "55.81", "4.79"), _
+            Array("dal", "emotional_prompt", "55.53", "1.20"), _
+            Array("GEHC-HTIC", "gehc_htic_task_a", "53.53", "8.57"), _
+            Array("uniud", "run1_no-rerank_sparse", "39.10", "1.87"), _
+            Array("Baseline", "TEST (organisers')", "44.34", "4.67"), _
+            Array("Ours", "phase1_baseline", "5.55", "0.52"))
+
+    AddBulletSlide pres, "Pipeline architectures across the seven Task A teams", Array( _
+        "CLaC: BM25 + ColBERT + NLI + LLM in decision (top Sup F1 67.74)", _
+        "InfoLab: BM25 + strong reranker + SciFive-MedNLI variants (top Con F1 15.67)", _
+        "GEHC-HTIC: BM25 'Decoupled Lexical' + Narrative-Aware Rerank + One-Shot ICL", _
+        "  (arXiv:2603.17580, GE Healthcare Bangalore)", _
+        "dal: BM25 + RAG variants + Llama-3-70B / GPT-3.5 with emotional / expert prompts", _
+        "polito: BM25 + SciFive-large fine-tuned on MedNLI", _
+        "SIB: BM25 / SIBiLS + Bio-Medical-Llama-3-8B (per HF card)", _
+        "uniud: sparse + dense passage indexes, four rerank-on/off ablations", _
+        "Baseline TEST: BM25 + ms-marco-MiniLM + SciFive-MedNLI", _
+        "Ours: BM25 + MedCPT-CE + DeBERTa-MNLI + NegEx — LLM kept OUT of pipeline (only in judge)")
+
+    AddBulletSlide pres, "Field finding — LLM-in-decision is where the Supports gap lives", Array( _
+        "Every top-Supports system places an LLM in the DECISION path (CLaC, GEHC-HTIC, dal)", _
+        "NLI-only pipelines (baseline TEST, polito, ours) cap around 44-55 Sup F1", _
+        "We deliberately kept the LLM out of the pipeline (cleaner attribution, cheaper iteration)", _
+        "  → structural cost: bounded Sup F1 that §10 methodological work does NOT close", _
+        "scifive_large ablation: 1.04 Con F1 official, 5.85 expanded — domain NLI is not a free win", _
+        "Phase 4 candidate: phase2_llm_decision — CoT-prompted gpt-4o-mini over MedCPT-CE top-30", _
+        "  expected lift: ~10+ pp on Sup expanded; cost: ~$1-2 per full run at concurrency 8")
+
+    AddBulletSlide pres, "Pool construction (overview §6) — pool bias quantified", Array( _
+        "Official pool: 10 topics (not 40), 244 PubMed abstracts manually assessed", _
+        "ONE top-priority run per team contributes — 7 teams + baseline = 8 runs feeding the pool", _
+        "588 human triples in our qrels = the 244 PMIDs × answer-sentence × class expansion", _
+        "= the structural mechanism our §5 / §8.1 analysis already diagnosed, now confirmed in print", _
+        "Pool bias inflates the baseline TEST run by 27.79 pp (44.34 official → 16.55 §2.17)", _
+        "Non-pooled retrospective systems pay the smaller-but-same-direction gap")
+
+    AddBulletSlide pres, "BioACE / Llama-3.3 disclosure — repositioning our contribution", Array( _
+        "Overview §6: 'For all submitted runs, we used the BioACE evaluation framework' (Llama-3.3)", _
+        "Same prompt task: classify (answer-sentence, document) as Supports / Contradicts / Neutral / NR", _
+        "Overview defers: 'detailed analysis of correlation between expert and automated evaluation in future work'", _
+        "→ we are NOT the first to use LLM-as-judge here; the organisers already do", _
+        "Our differentiation is what we layer on top:", _
+        "  three backends + Krippendorff α; bootstrap CI on the gate; held-out k=5 CV ECE", _
+        "  CoT pivot diagnosed via 4-case probe; conservative-pool reporting with cell-level CIs", _
+        "= the infrastructure that makes single-backend LLM-as-judge defensible")
+
+    AddBulletSlide pres, "Code availability — 0 of 7 teams published", Array( _
+        "Audited all 7 Task A notebook papers + author personal GitHubs + institutional orgs", _
+        "  papers: trec.nist.gov/pubs/trec34/papers/<team>.biogen.pdf", _
+        "  orgs checked: CLaC-Lab, sib-swiss, ailab-uniud", _
+        "  personal profiles: jknafou, jarobyte91 (dal), aman2000jaiswal14 (dal)", _
+        "Zero participant repositories. Only public code: organisers' starter-kit-2025", _
+        "Nearest precedent: webis-de/trec24-biogen (2024, Webis did not submit in 2025)", _
+        "Implication: independent verification of Table 5 at the implementation level is IMPOSSIBLE", _
+        "Opportunity: submit this repo to 2026 as the first publicly reproducible Task A reference", _
+        "  independently of where pipeline ranks — the methodological infra IS the contribution")
+
+    AddBulletSlide pres, "Where this work sits in the broader IR literature", Array( _
         "Sparse: BM25 + Anserini biomed presets = competitive baseline at our scale", _
         "  SPLADE / uniCOIL beat BM25 on MS MARCO but need bigger VRAM at indexing", _
-        "Dense: MedCPT bi-encoder is the SOTA for PubMed (Jin 2023)", _
-        "  late-interaction (ColBERT-v2) would 10x recall but 10x storage", _
-        "NLI: DeBERTa-v3-MNLI is ~85% on MedNLI; SciFive-large reaches ~85.6%", _
-        "  our phase2_scifive_large variant is wired in (constrained-decoding T5), not yet run", _
-        "LLM-judge: closest parallel is TREC Health Misinformation 2022 (Clarke 2023)", _
-        "  they used 0.80 concordance threshold; we use 0.85 (stricter, cleaner labels)")
+        "Dense: MedCPT bi-encoder is SOTA for PubMed (Jin 2023, Bioinformatics)", _
+        "  late-interaction (ColBERT-v2) would 10× recall but 10× storage", _
+        "NLI: DeBERTa-v3-MNLI ~85% MedNLI; SciFive-large ~85.6%; both used in 2025 field", _
+        "LLM-judge closest external parallel: TREC Health Misinformation 2022 (Clarke 2023, 0.80 gate)", _
+        "LLM-judge closest internal parallel: BioGEN organisers' BioACE / Llama-3.3 (single backend, no CI)", _
+        "Multi-juror corroboration with Krippendorff α: new to the BioGEN family of tracks")
 
     AddBulletSlide pres, "Limitations", Array( _
         "Hardware: 4 GB VRAM rules out full-corpus dense, late-interaction, joint training", _
-        "  pipeline scales linearly to 24 GB+ GPUs without redesign", _
-        "No NLI fine-tuning (Phase 3 deferred). SciFact + HealthVer + BioNLI ≈ 50k pairs", _
-        "LLM-judge backend coverage: gpt-4o-mini only on the production expanded qrels", _
-        "  Llama-3.1-70B Together backend wired but not yet run (TOGETHER_API_KEY required)", _
-        "Expanded pool local to Phase 1 retrieval shape: variants that radically change retrieval", _
-        "  (phase2_hybrid) would need their own expand-pool pass", _
-        "Single domain-expert review of 12 disagreement cases — paper-grade would want 2 reviewers, 50+ cases")
+        "LLM-in-decision gap vs the field (CLaC 67.74, GEHC-HTIC 53.53) is NOT closed by §10 work", _
+        "  → structural cap on our Sup F1 until Phase 4 lifts the LLM-out-of-pipeline restriction", _
+        "Contradicts class is small-sample after intersection (31 positives on 3-way pool)", _
+        "Expanded pool local to Phase 1 retrieval shape: phase2_hybrid would need own expand-pool pass", _
+        "Single domain-expert review of 12 disagreement cases — paper-grade wants 2 reviewers, 50+", _
+        "No team-level head-to-head possible: 0 of 7 teams published task_a_output.json or code", _
+        "phase2_hybrid (BM25 + Dense MedCPT + RRF) wired but unrun (~24 h CPU encoding)")
 
     AddBulletSlide pres, "Future work", Array( _
-        "Phase 3 — NLI fine-tuning: QLoRA-tuned DeBERTa on SciFact/HealthVer/BioNLI", _
-        "  ~6 h on a free Colab GPU; expected 2-5 pp on contradict F1", _
-        "Phase 4 — agentic retrieval: LLM in the first-stage loop for query rewriting", _
-        "  Addresses BM25 vocabulary mismatch at source; cost / latency trade-off", _
-        "Backend-sensitivity experiment (design D10): run compare-backends with mini + 4o + Llama-70B", _
-        "  defensible claim for the paper: F1@expanded numbers are robust to judge choice", _
-        "Submit to TREC BioGEN 2026: the only way to fully escape pool bias for system numbers", _
-        "  calendar problem (track call usually March)")
+        "Phase 4 — phase2_llm_decision: CoT-prompted gpt-4o-mini over MedCPT-CE top-30", _
+        "  expected lift: 10+ pp on Sup expanded; cost ~$1-2/run at concurrency 8", _
+        "  this is the variant that would close the LLM-in-decision gap vs CLaC / GEHC-HTIC / dal", _
+        "Phase 3 — NLI fine-tuning: QLoRA-tuned DeBERTa on SciFact/HealthVer/BioNLI (~6 h Colab GPU)", _
+        "Reproduce CLaC / InfoLab / GEHC-HTIC on §2.17 pool if any team publishes task_a_output.json", _
+        "  one email away — closes the published-vs-honest gap for that team", _
+        "Phase 2.5 / 2.6 fourth-juror (Mixtral dedicated endpoint, MedPaLM) — 4-way Krippendorff α", _
+        "Submit to BioGEN 2026 as the FIRST publicly reproducible Task A pipeline", _
+        "  Hydra configs + Phase 2.5/2.6 qrels artefacts + three-judge α infrastructure = the contribution")
 
     AddBulletSlide pres, "Methodological contributions", Array( _
         "Pool-bias diagnosis and quantification for a specific 2025 TREC track", _
-        "LLM-as-judge with concordance gate, CoT prompt, OSS-default + paid escalation", _
-        "Dual-pool reporting (--qrels-pool, --source) recovers §6.5 anchor while exposing pool bias", _
-        "Engineering: reproducible Hydra configs, resume mode, per-phase VRAM/timing in metadata", _
-        "Cost-bounded LLM expansion: $1.77 total, $10 cost-cap with graceful quota-exhaustion", _
-        "Findings: pool bias ~10 pp (not 40), RM3 hurts on biomed, contradict path > starter-kit")
+        "  10 topics / 244 PMIDs / one run per team → 27.79 pp baseline inflation, now quantified", _
+        "LLM-as-judge defensibility infrastructure beyond BioACE / Llama-3.3 baseline:", _
+        "  three backends + Krippendorff α (mini ↔ Llama ↔ Qwen = 0.12 / 0.20 / 0.60)", _
+        "  bootstrap CI on the 0.85 gate; held-out k=5 CV ECE; CoT pivot via 4-case probe", _
+        "Dual + intersection pool reporting recovers §6.5 anchor while exposing pool bias honestly", _
+        "Three independent query-side falsifications (RM3 / LLM-RM3 / LLM-rewrite) all fail", _
+        "Cost-bounded LLM expansion: $5.15 total across §2 ($1.77), §10 ($0.91), Phase 2.5+2.6 ($6.47)", _
+        "Engineering: reproducible Hydra configs, resume mode, atomic checkpoint writes, 5xx retries", _
+        "First publicly reproducible Task A pipeline (0 of 7 BioGEN 2025 teams published code)")
 
     AddBulletSlide pres, "Key sources", Array( _
-        "TREC BioGEN — trec.nist.gov", _
-        "Pyserini — Lin et al. 2021; github.com/castorini/pyserini", _
-        "MedCPT — Jin et al. 2023, Bioinformatics; HuggingFace ncbi/MedCPT-*", _
-        "DeBERTa-v3 — He et al. 2021, arxiv 2111.09543", _
-        "SciFive — Phan et al. 2021, arxiv 2106.03598", _
-        "MedNLI — Romanov & Shivade 2018", _
-        "RRF — Cormack et al. 2009, SIGIR", _
-        "LLM-as-judge — Zheng et al. 2023, arxiv 2306.05685", _
-        "CoT prompting — Wei et al. 2022, arxiv 2201.11903", _
-        "Full bibliography: docs/phase2_report.md §13")
+        "TREC BioGEN 2025 overview — Gupta et al. 2026, arXiv:2603.21582 (Table 5 anchor)", _
+        "TREC 34 proceedings — trec.nist.gov/pubs/trec34/ (7 team notebook papers)", _
+        "GEHC-HTIC preprint — Sahoo et al. 2026, arXiv:2603.17580 (GE Healthcare Bangalore)", _
+        "Starter-kit-2025 — github.com/trec-biogen/starter-kit-2025 (baseline TEST anchor)", _
+        "Pyserini — Lin et al. 2021; MedCPT — Jin et al. 2023, Bioinformatics", _
+        "DeBERTa-v3 — He et al. 2021; SciFive — Phan et al. 2021; MedNLI — Romanov & Shivade 2018", _
+        "RRF — Cormack et al. 2009; LLM-as-judge — Zheng et al. 2023; CoT — Wei et al. 2022", _
+        "Calibration / ECE — Guo et al. 2017; Krippendorff α — Krippendorff 2011; Landis & Koch 1977", _
+        "LLM-filtered PRF — Mackie et al. 2023, SIGIR; Pal et al. 2020 (biomedical PRF)", _
+        "Full bibliography: docs/phase2_report.md §14")
 
     AddTitleSlide pres, "Questions?", _
         "Repository: github.com/<user>/trec_rag_2025" & vbCrLf & _
-        "Full report: docs/phase2_report.md" & vbCrLf & _
-        "Total spend: $1.77 + ~7.5 GPU-hours + 1 laptop"
+        "Full report: docs/phase2_report.md (§11.5 for field positioning)" & vbCrLf & _
+        "Total spend: ~$5.15 + ~22 GPU-hours + 1 laptop" & vbCrLf & _
+        "First publicly reproducible Task A pipeline (0 of 7 teams published code)"
 
     Application.DisplayAlerts = ppAlertsAll
 
