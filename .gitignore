@@ -42,3 +42,15 @@ Thumbs.db
 .env
 .env.*
 !.env.example
+
+# Organisers' qrels and derivative LLM-judge pools — never commit.
+# data/ is already excluded above; the patterns below are belt-and-
+# suspenders against accidental copies elsewhere in the tree (notebooks,
+# scratch dirs, pre-commit moves). Synthetic test fixtures under
+# tests/fixtures/mini_qrels*.jsonl do NOT match these patterns and stay
+# tracked.
+**/biogen20*_taskA_qrels*.jsonl
+**/biogen20*_taskA_qrels*.json
+**/baseline_labels*.json
+**/task_a_judgement_sample*.csv
+**/task_a_judgement_sample*.tsv
