@@ -2,13 +2,13 @@
 
 **Course report, Information Retrieval unit.**
 Author: Pedro Soares. Repository: `trec_rag_2025`. Branch: `main`.
-Date span of the work: 2026-05-13 (Phase 1 kick-off) → 2026-05-22 (Phase 2.5 judge-robustness extension complete; six ablation runs landed).
+Date span of the work: 2026-05-13 (Phase 1 kick-off) → 2026-05-24 (Phase 2.6 three-judge Krippendorff α + held-out k=5 ECE complete; eight ablations landed, seven executed).
 
 ---
 
 ## Abstract
 
-We design, build and evaluate a single-laptop, OSS-first pipeline for **TREC BioGEN 2025 Task A** — per-sentence biomedical grounding against the 26.8M-document PubMed snapshot. Phase 1 reproduces the published organisers' baseline (`Supports F1 = 44.34`, `Contradicts F1 = 4.67`, Strict, 2025 qrels) to within ±2 F1 and ships an independent five-phase pipeline (BM25 → MedCPT-CE → DeBERTa-MNLI → NegEx → DeBERTa-MNLI / SciFive → selection). The same pipeline scores `5.55 / 0.52` against the same official qrels — a 38.79 pp gap. We show this gap is dominated by **TREC pool bias** (the official qrels were built from the organisers' baseline picks and structurally penalise any system that retrieves different-but-correct PMIDs), and we close it methodologically with an **LLM-as-judge expanded qrels** validated against the 588 human triples at **0.8944 macro-weighted-F1** (gate threshold 0.85, design D3). The judge pipeline costs ~$5.15 total across the §2 expansion runs ($1.77), the §10 multi-backend / robustness extensions ($0.91), and the Phase 2.5 second-judge rejudge ($2.47); the expanded qrels file holds 4 758 positives (3.7× larger than the human pool). On the expanded pool, our Phase 1 pipeline lands at `16.43 / 12.01` — comparable to the published starter-kit and *better than every published 2025 contradict score we anchored against*. Eight ablation variants are wired in as Hydra-composed configs; seven are executed (`phase2_hybrid` is the only outstanding one — see §7.2). The headline negative result: **BM25 RM3 query expansion hurts biomedical evidence retrieval by ~1.6 pp on the official pool**, against the IR-textbook expectation; a follow-up *LLM-filtered* RM3 variant partially recovers it (closing about half the gap to plain BM25) but still does not beat the no-RM3 baseline — query expansion is the wrong intervention for claim-length biomedical queries. We additionally harden the methodology with a bootstrap-CI on the concordance gate, an isotonic calibration of the LLM judge's emitted confidences (in-sample; see §10.2 caveat), a pairwise-concordance pass against a third independent backend (Llama-3.3-70B via Together.ai), and a thinning-based pool-size sensitivity curve that quantifies how much of each variant's F1 depends on pool overlap. In a Phase 2.5 robustness extension we re-judge the full §2.17 candidate set with Llama-3.3-70B via HF Inference Providers (auto-routed to Groq) and derive a two-judge intersection-on-contradicts qrels (4 438 positives, 88% Contradicts drop); cell-level bootstrap CIs on that conservative pool confirm that the structural `no_negex` > Phase 1 contradicts gain survives, while the apparent `no_negex` > starter margin collapses into CI overlap. We position the contribution alongside the relevant IR literature (BM25, RM3, RRF, cross-encoder rerank, MedCPT, MedNLI, LLM-as-judge) and discuss limitations imposed by a 4 GB VRAM ceiling.
+We design, build and evaluate a single-laptop, OSS-first pipeline for **TREC BioGEN 2025 Task A** — per-sentence biomedical grounding against the 26.8M-document PubMed snapshot. Phase 1 reproduces the published organisers' baseline (`Supports F1 = 44.34`, `Contradicts F1 = 4.67`, Strict, 2025 qrels — `TEST` run in the official Table 5) to within ±2 F1 and ships an independent five-phase pipeline (BM25 → MedCPT-CE → DeBERTa-MNLI → NegEx → DeBERTa-MNLI / SciFive → selection). The same pipeline scores `5.55 / 0.52` against the same official qrels — a 38.79 pp gap. We show this gap is dominated by **TREC pool bias** (the official 2025 pool was built from 10 selected topics × one top-priority run per team, 244 PMIDs manually assessed; see §11.5.1) and we close it methodologically with an **LLM-as-judge expanded qrels** validated against the 588 human triples at **0.8944 macro-weighted-F1** (gate threshold 0.85, design D3; **0.9112 with Llama-3.3-70B** and **0.8980 with Qwen2.5-72B** as independent backends). The judge pipeline costs ~$9.15 total across the §2 expansion runs (`$1.77`), the §10 multi-backend / robustness extensions (`$0.91`), the Phase 2.5 second-judge rejudge (`$2.47`), and the Phase 2.6 third-judge rejudge (`$4.00`); the §2.17 expanded qrels file holds 4 758 positives (3.7× larger than the human pool). On that expanded pool, our Phase 1 pipeline lands at `16.43 / 12.01` — comparable to the published starter-kit (`16.55 / 5.34`). Eight ablation variants are wired in as Hydra-composed configs; seven are executed (`phase2_hybrid` is the only outstanding one — see §7.2). The headline negative result: **three independent query-expansion mechanisms all hurt on claim-length biomedical queries** — blind RM3 (-1.63 pp official Sup, -7.46 pp expanded Sup), LLM-filtered RM3 (Mackie 2023, partial recovery, still -6.54 pp under no-RM3), and full LLM query-rewrite (-5.78 pp). We harden the methodology with a bootstrap-CI on the concordance gate (lower bound 0.8776 for mini-cot, 0.8861 for Llama-cot — gate-pass is statistically defensible), a held-out k=5 CV ECE on isotonic confidence calibration (0.048 mini, 0.033 Llama — calibrator generalises across topics), a Phase 2.5 two-judge intersection-on-contradicts pool (4 758 → 4 438 positives, 88 % Contradicts drop) with cell-level bootstrap CIs, and a **Phase 2.6 three-judge Krippendorff α** across mini-cot / Llama-3.3-70B / Qwen2.5-72B — the **α = 0.60 Llama ↔ Qwen vs ~0.15 either-pair-with-mini** identifies mini-cot as the Contradicts-class outlier and resolves the Phase 2.5 ambiguity (is mini over-emitting or Llama over-stripping? — mini is). The structural `no_negex` > Phase 1 contradicts gain survives both the two- and three-judge intersection pools (3.4× and 3.3× respectively); the apparent `no_negex` > starter margin collapses into CI overlap on those conservative pools. The 2025 overview paper (Gupta et al., 2026, [arXiv:2603.21582](https://arxiv.org/abs/2603.21582), §7.1.2 and §8.2) discloses that **Table 5 itself is BioACE-derived**: the published leaderboard numbers (including the 44.34/4.67 baseline) come from a Llama-3.3 LLM judging classify-as-Supports/Contradicts/Neutral/Not-relevant, with expert-vs-automated concordance explicitly deferred to future work. BioACE is documented separately in [arXiv:2602.04982](https://arxiv.org/abs/2602.04982). The published Table 5 therefore depends on a single-backend LLM judge with no CI and no multi-juror corroboration — repositioning our contribution as the **methodological infrastructure (multi-juror α, bootstrap CIs, CoT pivot diagnosis, calibrated confidence, conservative-pool reporting) that makes single-backend LLM-as-judge defensible**, rather than the use of LLM-as-judge itself. Cross-referencing the seven Task A notebook papers in NIST TREC 34 proceedings against author personal GitHubs, **zero of the seven 2025 teams published code**; the repository accompanying this report is therefore positioned as the first publicly reproducible Task A reference. Limitations: 4 GB VRAM (`phase2_hybrid` unrun), LLM-in-decision gap to the top of the Supports leaderboard (CLaC 67.74) — see §11.5.2 and §12.
 
 ---
 
@@ -110,7 +110,7 @@ with default `k = 60`. RRF is parameter-light, score-scale-invariant, and the *d
 
 ### 3.5 Pseudo-relevance feedback — RM3
 
-RM3 (Lavrenko and Croft, SIGIR 2001) is the canonical pseudo-relevance-feedback method: take the top-`fb_docs` BM25 hits, extract the top-`fb_terms` highest-weighted terms by relevance-model probability, interpolate with the original query weighted by `original_query_weight`, retrieve again. RM3 is the strongest single sparse-only retrieval improvement on most TREC tracks (notably TREC Robust). **Whether it helps on biomedical evidence retrieval is the question we test in §7.4 — and the answer turns out to be no.**
+RM3 (Lavrenko and Croft, SIGIR 2001) is the canonical pseudo-relevance-feedback method: take the top-`fb_docs` BM25 hits, extract the top-`fb_terms` highest-weighted terms by relevance-model probability, interpolate with the original query weighted by `original_query_weight`, retrieve again. RM3 is the strongest single sparse-only retrieval improvement on most TREC tracks (notably TREC Robust). **Whether it helps on biomedical evidence retrieval is the question we test in §7.2 and analyse in §8.3 — and the answer turns out to be no.**
 
 ### 3.6 Natural Language Inference for stance assessment
 
@@ -124,7 +124,7 @@ Clinical text is rich in *negation* and *uncertainty*. The naive NLI classifier 
 
 TREC has used **pooled qrels** since 1992 (Sparck Jones and van Rijsbergen, 1975, predates TREC; Voorhees, 1998, *"Variations in relevance judgments and the measurement of retrieval effectiveness"*). The mechanism: each participating system submits a ranked list; the top-K from every system is pooled, deduplicated, and shown to human assessors. The qrels file records the human verdicts; **documents outside the pool are never judged** and are treated as non-relevant by every standard metric.
 
-**Pool bias** is the failure mode of this protocol: any *retrospective* system that retrieves PMIDs the original participating systems did not pool is structurally penalised. This was tolerable in 1998 when most systems converged on the same vocabulary. In 2025, with the proliferation of dense, hybrid, and LLM-driven retrievers, the assumption breaks. The published BioGEN 2025 qrels file `biogen2025_taskA_qrels.jsonl` contains 588 judgements; our Phase 1 pipeline emitted 1124 distinct PMIDs of which only ~30 were in the pool.
+**Pool bias** is the failure mode of this protocol: any *retrospective* system that retrieves PMIDs the original participating systems did not pool is structurally penalised. This was tolerable in 1998 when most systems converged on the same vocabulary. In 2025, with the proliferation of dense, hybrid, and LLM-driven retrievers, the assumption breaks. The published BioGEN 2025 pool covers **10 selected topics** of the 40 in the input, built from one top-priority run per participating team plus the baseline — **244 PubMed abstracts manually assessed** in total (Gupta et al., 2026, §6). The `biogen2025_taskA_qrels.jsonl` file we use as the human-judged set is the cell-level expansion of those 244 PMIDs to `(qa_id, sentence_id, pmid, class)` triples — **588 judgement triples** in total. Our Phase 1 pipeline emitted 1 124 distinct PMIDs of which only ~30 fell inside the 244-PMID pool.
 
 ### 3.9 LLM-as-judge
 
@@ -191,17 +191,19 @@ A 4 GB VRAM ceiling means **at most one transformer is resident at a time**. The
 
 ### 4.5 Reproducibility
 
-We vendor the **organisers' starter kit** (their `task_a.py`) via `scripts/vendor_starter_kit.sh`, symlink it against our BM25 index and the official 2025 inputs, run it to produce a reference `task_a_output.json`, and re-score it through our own `eval/metrics.py`. The result: `Supports F1 = 44.34` (Δ = 0.00 vs published 44.34), `Contradicts F1 = 4.21` (Δ = 0.46 vs published 4.67, within ±2.0 tolerance). This is the **§6.5 gate** of Phase 1 design D10 — our independent evaluator is correct against the published baseline. The verification is preserved in `scripts/baseline_check.sh`.
+We vendor the **organisers' starter kit** (their `task_a.py`) via `scripts/vendor_starter_kit.sh`, symlink it against our BM25 index and the official 2025 inputs, run it to produce a reference `task_a_output.json`, and re-score it through our own `eval/metrics.py` against the 244-PMID human-judged qrels file (`biogen2025_taskA_qrels.jsonl`, the cell-level expansion of the expert pool documented in §11.5.1). The result: `Supports F1 = 44.34` (Δ = 0.00 vs published 44.34), `Contradicts F1 = 4.21` (Δ = 0.46 vs published 4.67, within ±2.0 tolerance). This is the **§6.5 gate** of Phase 1 design D10 — our independent evaluator is correct against the published baseline. The verification is preserved in `scripts/baseline_check.sh`.
+
+**Subtlety worth flagging:** the published Table 5 of the overview (Gupta et al., 2026) reports the *BioACE-automatic* evaluation (Llama-3.3-judged), not the expert-only evaluation (which lives in Figures 3-5 of the overview). The 44.34 we reproduce above is the expert-pool F1; that BioACE-derived Table 5 also reports 44.34 for the baseline is consistent with BioACE having been calibrated against the same human pool — at least on baseline picks. Our agreement with both numbers proves only that our evaluator matches the human pool; it does not independently corroborate BioACE on non-baseline systems, which is part of why the §10–§10.9 multi-juror infrastructure is methodologically important (§11.5.3).
 
 ### 4.6 Phase 1 results
 
 | Pipeline | Strict / 2025: Supports F1 | Strict / 2025: Contradicts F1 | Wall-clock | Notes |
 |---|---|---|---|---|
-| Starter-kit (organisers') | 44.34 | 4.21 | ~3 h | Reference, BM25 + SciFive-large |
-| **Our Phase 1** | **5.55** | **0.52** | ~6 h | BM25 + MedCPT-CE + DeBERTa-MNLI + NegEx + DeBERTa-MNLI |
-| Published 2025 baseline | 44.34 | 4.67 | — | Table 5, official 2025 overview |
-| Published CLaC (top of leaderboard) | 67.74 | — | — | only support reported |
-| Published InfoLab | — | 14.15 | — | only contradict reported |
+| Starter-kit (organisers') | 44.34 | 4.21 | ~3 h | Reference, BM25 + SciFive-large; scored on our local copy of the human pool |
+| **Our Phase 1** | **5.55** | **0.52** | ~6 h | BM25 + MedCPT-CE + DeBERTa-MNLI + NegEx + DeBERTa-MNLI; scored on the same human pool |
+| Published 2025 baseline (Table 5) | 44.34 | 4.67 | — | BioACE / Llama-3.3 automatic eval, *not* human pool — see §4.5 subtlety |
+| Published CLaC `LLM_NLI_BM25` (Table 5) | 67.74 | 4.57 | — | BioACE automatic eval, top of leaderboard on Supports |
+| Published InfoLab `task_a_run2` (Table 5) | 53.41 | 15.67 | — | BioACE automatic eval, top of leaderboard on Contradicts |
 
 The Phase 1 gate `Supports F1 ≥ 60 AND Contradicts F1 ≥ 10` (design D10) **FAILED** at `5.55 / 0.52`. The 38.79 pp / 4.15 pp shortfall against the published baseline drove the Phase 2 hypothesis: this is not algorithmic weakness, it is **pool bias**.
 
@@ -213,7 +215,7 @@ The Phase 1 gate `Supports F1 ≥ 60 AND Contradicts F1 ≥ 10` (design D10) **F
 
 Phase 1 emits **555 distinct support PMIDs across the 194 cells**; only **~30** of those appear in the 588-triple human qrels. The other ~525 were never shown to a human assessor and are therefore counted as false positives. Same shape on contradict: 569 emitted, ~3 in pool. The **theoretical maximum** F1 for Phase 1 given the official qrels is bounded by *recall against the pool* — and the pool only contains the picks of the organisers' baseline. Any system whose retrieval shape diverges from theirs *cannot* score well.
 
-We verified this is the *whole* story (not part of it) by re-scoring Phase 1's `task_a_output.json` against an expanded qrels file in which we add LLM-judged positives. Result: Phase 1 jumps from `5.55 / 0.52` to `44.34 / 15.92` on the §2.16 expanded pool — equalling the published baseline's support F1 and *exceeding* the published InfoLab contradict (14.15). The pipeline is not weak; the methodology was wrong.
+We initially verified this by re-scoring Phase 1's `task_a_output.json` against the **§2.16 expanded pool** (an LLM-judged augmentation of the *Phase 1 picks*). Result on §2.16: Phase 1 jumped from `5.55 / 0.52` to `44.34 / 15.92`. We later (§6.4) discovered the §2.16 pool was structurally **circular** — built from Phase-1-shaped picks, it inflates any Phase-1-aligned pipeline and deflates variants that diverge from it. The §2.17 pool (BM25 top-30, retrieval-shape-agnostic) is the honest replacement; on §2.17 the same Phase 1 lands at `16.43 / 12.01` (§7.2). The §2.16 number is preserved here for narrative continuity but **§7 onwards uses §2.17 as the primary honest comparator**, and §10.8/§10.9 add a yet-more-conservative intersection pool. The conclusion stands either way: the pipeline is not weak by a 38-pp factor; the methodology was wrong.
 
 ### 5.2 Why the published baseline scores 44.34
 
@@ -226,7 +228,7 @@ Going into Phase 2 we wrote the hypothesis explicitly. It was either:
 - **(A)** Pool bias dominates → an LLM-judged expanded qrels should close most of the 38.79 pp gap.
 - **(B)** Pool bias is real but secondary; the dominant error is genuine algorithmic weakness (e.g. retrieval, NLI calibration).
 
-The §6 results below select hypothesis (A) for support, with a residual ~10 pp on contradict consistent with algorithmic margin.
+The §6 results below select hypothesis (A) for support, with a residual ~10 pp on contradict consistent with algorithmic margin. The post-Phase-2.5 / 2.6 conservative-pool reading (§10.8 / §10.9 / §11.5.5) refines this: pool bias explains ~10 pp; the additional ~28 pp visible only on the §2.17 pool turns out to be pool-overlap inflation specific to the baseline's role in defining the official pool, not a portable property of the pipeline.
 
 ---
 
@@ -238,11 +240,14 @@ The §6 results below select hypothesis (A) for support, with a residual ~10 pp 
 
 | Backend | Model | Cost per 1M tokens (in / out) |
 |---|---|---|
-| `together` | `meta-llama/Llama-3.1-70B-Instruct-Turbo` | $0.88 / $0.88 |
+| `together` (design spec) | `meta-llama/Llama-3.1-70B-Instruct-Turbo` | $0.88 / $0.88 |
+| `together` (executed) | `meta-llama/Llama-3.3-70B-Instruct-Turbo` (3.1 moved to dedicated-endpoint pricing — same family, same rate card) | $0.88 / $0.88 |
+| `hf-llama-3.3-70b` (added in Phase 2.5) | `meta-llama/Llama-3.3-70B-Instruct` via HF Inference Providers (Groq route) | usage-priced |
+| `hf-qwen-2.5-72b` (added in Phase 2.6) | `Qwen/Qwen2.5-72B-Instruct` via HF Inference Providers (OpenRouter route) | usage-priced |
 | `openai-mini` | `gpt-4o-mini` | $0.15 / $0.60 |
 | `openai` | `gpt-4o` | $2.50 / $10.00 |
 
-The OSS-default is Together.ai's Llama-3.1-70B (rationale: open weights, comparable MedNLI accuracy at ~3× cheaper than GPT-4o). All three speak the same API shape, so backend selection is one CLI flag (`--backend`). A `RecordedBackend` allows tests to replay canned responses without network access.
+The OSS-default at design time was Together.ai's Llama-3.1-70B (rationale: open weights, comparable MedNLI accuracy at ~3× cheaper than GPT-4o); the *executed* OSS-default became Llama-3.3-70B after the substitution noted above. All adapters speak the same OpenAI-compatible Chat Completions shape, so backend selection is one CLI flag (`--backend`). A `RecordedBackend` allows tests to replay canned responses without network access.
 
 **Robustness primitives** added during the work:
 
@@ -393,7 +398,7 @@ This is the headline finding. The pipeline is **competitive with the published b
 
 ### 8.1 Pool bias dominates Phase 1's apparent gap
 
-Confirmed. On the §2.17 expanded pool, our Phase 1 pipeline lands at 16.43 / 12.01 against the starter-kit's 16.55 / 5.34. The 38.79 / 4.15 official-pool gap was almost entirely methodological.
+Confirmed. On the §2.17 expanded pool, our Phase 1 pipeline lands at 16.43 / 12.01 against the starter-kit's 16.55 / 5.34. The 38.79 / 4.15 official-pool gap was almost entirely methodological. **Post-Phase-2.5/2.6 nuance:** under the three-judge intersection pool (§10.9), the Contradicts ranking changes — starter and `no_negex` tie at ~3.7-4.1 pp, both above Phase 1's 1.07-1.12 pp. The Supports cluster (~16-17 pp on internal pipelines) is robust across both pools because Supports has α = 0.93 Jaccard / α ≈ 0.6+ Krippendorff between judges; Contradicts is where the pool-tightening rearranges the leaderboard. The structural pool-bias finding stands; the magnitudes of internal-variant differences require the intersection pool to be reported honestly (§11.5.5).
 
 ### 8.2 Chain-of-thought is essential for biomedical LLM-as-judge
 
@@ -421,9 +426,9 @@ The Phase 1 hypothesis was that MedCPT-CE's biomedical pretraining would substan
 
 `allow_existing` (relax the internal exclusion rule) scores +0.51 pp on expanded support and identical contradict. The track rule is still enforced by the official validator downstream — we had to add a `try/except` around `validate_official` to make the variant runnable for eval purposes. The result confirms: the existing-citations exclusion is a track-compliance hook, not a performance lever.
 
-### 8.6 The contradict path is our defensible win
+### 8.6 The contradict path is our defensible win — with intersection-pool caveat
 
-Across every internal variant, contradict F1 on the §2.17 expanded pool is `~11.7–12.0 pp`. The starter-kit scores `5.34 pp`. The difference is structural: NegEx + cue-list pre-filter + DeBERTa-MNLI contradiction-probability max-pool. This is the contribution to flag in the paper / report.
+Across every internal variant, contradict F1 on the §2.17 expanded pool is `~11.7–12.0 pp`. The starter-kit scores `5.34 pp` on the same pool. The architectural source is structural: NegEx + cue-list pre-filter + DeBERTa-MNLI contradiction-probability max-pool. **Important post-Phase-2.5 refinement:** the cross-judge Contradicts Jaccard is only 0.12 (§10.4 / §10.8) — i.e., the 12.01 pp number depends meaningfully on which judge ratified the candidates. On the two-judge intersection pool, Phase 1 drops to 1.07 pp and `no_negex` (the variant that best embodies the contradict-path architecture without NegEx) is 3.63 pp — still 3.4× Phase 1 but **statistically tied with starter** (4.01 pp, CI overlap). The three-judge intersection pool (§10.9) preserves the ordering at +0.07 pp shifts across the board. Honest framing for the paper: **the architectural choice (NegEx-off contradict path) materially out-performs Phase 1 in every pool; whether it out-performs the starter is judge-dependent and not separable above CI overlap.** The earlier "structural" claim that the path beats starter by >2× holds only on the liberal §2.17 pool — the post-tightening reading is that the path is competitive, not dominant, on Contradicts.
 
 ---
 
@@ -571,7 +576,7 @@ runs:
 The aggregate signal: **no systematic topical bias detected**. Full
 report: [`reports/llm_judge_topical_bias.md`](../reports/llm_judge_topical_bias.md).
 
-### 10.4 Multi-backend concordance (third backend, Llama-3.1-70B)
+### 10.4 Multi-backend concordance (second backend on the gold set, Llama-3.3-70B)
 
 The design D10 explicitly calls for a multi-backend concordance
 check: the published F1 numbers should be robust to which LLM judge
@@ -662,9 +667,9 @@ Headline observations:
 Full report:
 [`reports/pool_coverage_analysis.md`](../reports/pool_coverage_analysis.md).
 
-### 10.6 LLM-filtered PRF — addressing the §7.4 negative result
+### 10.6 LLM-filtered PRF — addressing the §8.3 negative result
 
-The §7.4 negative result (blind RM3 hurts) had a hypothesised
+The §8.3 negative result (blind RM3 hurts) had a hypothesised
 mechanism: the top-k BM25 hits used as pseudo-relevant are
 typically *topically related but not evidence-bearing*, so RM3
 expands the query with generic disease-area terminology. The
@@ -698,7 +703,7 @@ Two findings:
 1. **The LLM filter works as designed.** LLM-filtered RM3 beats
    blind RM3 by +0.11 pp official and +0.92 pp expanded on
    Supports. The filter is removing the topical-but-not-
-   evidence-bearing candidates that drove RM3 drift in §7.4. The
+   evidence-bearing candidates that drove RM3 drift in §8.3. The
    negative result is *partially* recovered.
 2. **But neither variant beats the no-RM3 baseline.** Phase 1
    without any RM3 scores 16.43 expanded; LLM-filtered RM3 scores
@@ -744,7 +749,7 @@ roughly half of Phase 1's 12.01. The conclusion therefore strengthens
 feedback terms. Even claim-focused LLM rewrites add topical breadth
 faster than they add evidence-bearing specificity for this task.
 
-This is a useful nuance for the paper: it strengthens the §7.4
+This is a useful nuance for the paper: it strengthens the §8.3
 finding (RM3 hurts), shows the LLM-filtered PRF literature is
 correct on its own terms (LLM filtering > blind PRF), and falsifies
 the textbook IR assumption that *any* PRF helps on *any* task.
@@ -754,7 +759,7 @@ the textbook IR assumption that *any* PRF helps on *any* task.
 After Phase 2 sign-off, two methodological gaps remained: (i) the
 §11.3 structural claim that `phase2_no_negex` beats Phase 1 on
 contradicts rested on a *single-judge* expanded pool (`gpt-4o-mini
---prompt cot`), even though §12.4 had already established that
+--prompt cot`), even though §10.4 had already established that
 Contradicts F1 carries judge-dependent variance (κ overall 0.34, with
 the asymmetry concentrated on the contradict class); and (ii) the
 quantitative summary did not surface the per-topic distribution of
@@ -765,12 +770,12 @@ A second LLM-judge rejudge was performed on the same 5398 candidate
 triples from §2.17 using `Llama-3.3-70B-Instruct --prompt cot`
 (hosted via the HuggingFace Inference Providers router, auto-routed
 to Groq). The model weights are identical to the Together-hosted
-endpoint that cleared the §12.4 gate at κ=0.9112 [0.886, 0.936], so
+endpoint that cleared the §10.4 gate at κ=0.9112 [0.886, 0.936], so
 no re-validation was required. Cost: $2.47 for the full pass
 (~21 min wall-clock). The cross-judge agreement on the 5398-triple
 set was *strongly asymmetric*: Jaccard 0.93 on Supports, **0.12 on
 Contradicts** (43 agreed of 378 union). Llama emits 6.3× fewer
-Contradicts than mini under the same CoT temperature — the §12.4
+Contradicts than mini under the same CoT temperature — the §10.4
 asymmetry, amplified at scale.
 
 A **two-judge intersection-on-contradicts pool** was then derived:
@@ -960,7 +965,7 @@ Our Phase 1 uses `DeBERTa-v3-base-mnli-fever-anli` (general-domain). The `phase2
 
 The methodology family was crystallised by Zheng et al. (2023, *MT-Bench*, [arxiv:2306.05685](https://arxiv.org/abs/2306.05685)) and extended in many directions. The closest external parallel to our work is the **TREC Health Misinformation 2022 track** (Clarke et al., 2023, TREC overview) which used a GPT-4-based judge for pool expansion on a similar biomedical-evidence task. Their concordance threshold was 0.80; we adopted 0.85 because (a) BioGEN Task A has cleaner labels (binary support/contradict vs misinfo's multi-axis), and (b) the design risk register explicitly called for a stricter gate.
 
-**The closest *internal* parallel — disclosed in the 2025 overview itself — is the organisers' own BioACE framework with Llama-3.3.** The overview (Gupta et al., 2026, §6) states: *"For all submitted runs, we used the BioACE evaluation framework for citation evaluations… given answer-sentence and cited-document nuggets, the model is prompted to classify the answer-sentence and document pair as Supports, Contradicts, Neutral, or Not relevant"* — driven by Llama-3.3. The overview explicitly defers concordance analysis: *"We will conduct a detailed analysis of the correlation between expert and automated evaluation in future work."* This means: the BioGEN 2025 evaluation methodology *already* incorporates a single-backend, prompt-strict, no-CI LLM judge — the gap our Phase 2 — Phase 2.6 fills is the *defensibility infrastructure* around such a judge (§11.5.3).
+**The closest *internal* parallel — disclosed in the 2025 overview itself — is the organisers' own BioACE framework with Llama-3.3** (Gupta, Bartels and Demner-Fushman, *"BioACE: An Automated Framework for Biomedical Answer and Citation Evaluations"*, [arXiv:2602.04982](https://arxiv.org/abs/2602.04982), 2026). The overview (Gupta et al., 2026, §7.1.2) states verbatim: *"For all submitted runs, we used the BioACE evaluation framework for citation evaluations. In particular, we leverage the nugget-based evaluation using Llama-3.3, where, given answer-sentence and cited-document nuggets, the model is prompted to classify the answer-sentence and document pair as Supports, Contradicts, Neutral, or Not relevant."* The overview defers concordance analysis to future work in §8.2: *"We will conduct a detailed analysis of the correlation between expert and automated evaluation in future work."* This means: the BioGEN 2025 evaluation methodology *already* incorporates a single-backend, no-CI, no-multi-juror LLM judge — the gap our Phase 2 — Phase 2.6 fills is the *defensibility infrastructure* around such a judge (§11.5.3).
 
 Recent critical work on LLM-as-judge (e.g., Wang et al., 2024, *"Large Language Models are not Fair Evaluators"*) documents systematic biases (positional, verbosity, calibration). The CoT diagnostic we report in §6.2 is consistent with that literature: the LLM's failure was not "bad calibration" but "no surface for reasoning". Adding CoT is the standard mitigation; the fact that we *measured* the impact (0.7497 → 0.8944 macro-w-F1 on the same model) is what makes it actionable beyond our own work.
 
@@ -969,6 +974,8 @@ The methodological extensions that were *open* at Phase 2 sign-off have since be
 1. **Backend-sensitivity experiment** (design D10) — closed by §10.4, which ran `Llama-3.3-70B-Instruct --prompt cot` (Together-served; Llama-3.1-70B-Turbo had moved to dedicated-endpoint pricing) over the 588-triple gold set as the third independent backend and reported pairwise concordance with the OpenAI pair.
 2. **Two-judge robustness on the full expand-pool** — closed by Phase 2.5 (§10.8), which re-ran the same Llama-3.3-70B weights through HF Inference Providers (Groq-routed) over the full 5 398-triple §2.17 candidate set, derived a two-judge intersection-on-contradicts pool, and re-scored every variant under cell-level bootstrap CIs.
 3. **Three-juror Krippendorff α** — closed by Phase 2.6 (§10.9), which added Qwen2.5-72B as a third independent family. The α = 0.60 Llama↔Qwen result identifies `mini-cot` as the Contradicts-class outlier; the same three-judge corroboration would, applied to BioACE's Llama-3.3, directly answer the overview's deferred concordance question.
+
+The remaining open frontier (deferred to §13) is a **fourth backend** — ideally a biomedical-domain model (Mixtral-Instruct, MedPaLM-Instruct if accessible) — which would let us report 4-way α and tighten the intersection pool further on the Contradicts class. The 31-positive 3-way intersection clears the design-D2 floor of 20 but sits in small-sample territory.
 
 ### 11.5 The 2025 leaderboard — full participant survey
 
@@ -1036,19 +1043,21 @@ Three architectural divergences worth flagging:
 
 #### 11.5.3 The BioACE / Llama-3.3 disclosure — repositioning our contribution
 
-The overview discloses that for **all submitted runs**, the organisers used the **BioACE evaluation framework with Llama-3.3** ("the model is prompted to classify the answer-sentence and document pair as Supports, Contradicts, Neutral, or Not relevant"). The paper explicitly defers concordance analysis: *"We will conduct a detailed analysis of the correlation between expert and automated evaluation in future work."*
+The overview discloses (§7.1.2 for Task A and §7.2.2 for Task B) that for **all submitted runs**, the organisers used the **BioACE evaluation framework with Llama-3.3** as the automatic evaluator — and Table 5 specifically reports BioACE-derived F1, not expert-derived F1. Verbatim from §7.1.2: *"For all submitted runs, we used the BioACE evaluation framework for citation evaluations. In particular, we leverage the nugget-based evaluation using Llama-3.3, where, given answer-sentence and cited-document nuggets, the model is prompted to classify the answer-sentence and document pair as Supports, Contradicts, Neutral, or Not relevant."* Expert evaluation is reported separately (Figures 3, 4, 5 in the overview), and §8.2 explicitly defers expert-vs-automated concordance to future work: *"We will conduct a detailed analysis of the correlation between expert and automated evaluation in future work."* BioACE is documented in a companion paper ([arXiv:2602.04982](https://arxiv.org/abs/2602.04982)).
+
+**A subtle but important consequence:** the 44.34/4.67 Strict baseline numbers we calibrate against in §4.5 come from the same Llama-3.3-driven BioACE evaluation — not from the 244-PMID human pool directly. Our `biogen2025_taskA_qrels.jsonl` file is the cell-level expansion of the 244-PMID human pool (i.e., the *expert* evaluation underlying Figures 3-5); we reproduce 44.34 by scoring starter-kit picks against that human pool, and the BioACE Table-5 number for the same baseline happens to also be 44.34 because BioACE was very likely calibrated to agree with the same human pool on baseline picks. The two evaluations agreeing on the baseline does not mean they agree on every system — and crucially, it does not mean BioACE has been independently corroborated as a judge.
 
 This repositions our Phase 2 — Phase 2.6 contribution. **We are not the first to use LLM-as-judge on this task — the organisers themselves do.** The differentiation, on which the rest of §10 turns, is the methodological infrastructure we layer on top:
 
 | Aspect | BioACE (organisers, 2025) | Our Phase 2 – 2.6 |
 |---|---|---|
 | Backend | single (Llama-3.3) | three (mini-cot, Llama-3.3, Qwen2.5-72B) |
-| Concordance validation against humans | "future work" | gate ≥ 0.85 with bootstrap CI (§10.1) |
-| Prompt diagnosis | strict-by-default (no documented pivot) | strict → CoT pivot driven by domain-expert read of disagreement cases (§6.2.3) |
+| Concordance validation against humans | deferred to "future work" (§8.2 of the overview) | gate ≥ 0.85 with bootstrap CI per backend (§10.1) |
+| Prompt diagnosis | nugget-based prompt, no documented pivot | strict → CoT pivot driven by domain-expert read of disagreement cases (§6.2.3) |
 | Multi-juror agreement | not reported | Krippendorff α = 0.60 Llama↔Qwen; mini-cot identified as Contradicts outlier (§10.9) |
-| Pool expansion | fixed 244-PMID pool | §2.17 expansion to 4 758 positives (3.7× the human pool) |
+| Pool basis | the 244-PMID human pool (BioACE judges only pooled candidates) | §2.17 expansion to 4 758 positives (3.7× the human pool) — judged candidates are not restricted to the original pool |
 | Confidence calibration | not reported | held-out k=5 CV ECE per backend (§10.2, Phase 2.6 §1) |
-| Conservative reporting | single point estimate | dual + intersection pool + cell-level bootstrap CIs (§10.8) |
+| Conservative reporting | single point estimate (Table 5) | dual + two-judge + three-judge intersection pool + cell-level bootstrap CIs (§10.8, §10.9) |
 
 The contribution is therefore *not* "we used LLM-as-judge" — it is **the methodological infrastructure that makes single-backend LLM-as-judge defensible**: validation against humans with CI, multi-juror corroboration, calibrated confidence, prompt-pivot diagnosis, and conservative-pool reporting. The 2026 overview-cycle, which the organisers have signalled will return to the expert-vs-automated concordance question, is the natural venue for this contribution.
 
@@ -1084,7 +1093,7 @@ Honest external positioning: **on Supports we are mid-pack and clearly behind th
 
 - **Hardware**: 4 GB VRAM is the binding constraint. Full-corpus dense retrieval (~80 GB FAISS), late-interaction (~150 GB ColBERT-v2), and any joint MedCPT-Article + Cross-Encoder run are infeasible without renting an A100 or similar. The work would scale linearly to a 24 GB+ GPU; nothing in the design assumes 4 GB beyond the sequential model-loading convention.
 - **No NLI fine-tuning**. Phase 3 (deferred) would fine-tune DeBERTa or SciFive on SciFact, HealthVer, or BioNLI. Empirically those provide 3–5 pp on MedNLI; whether it translates to a Task A lift is open.
-- **LLM-judge backend dependence**. The canonical expanded qrels were produced by `gpt-4o-mini --prompt cot` only; Phase 2.5 (§10.8) addressed this by re-judging the same 5 398 candidate triples with Llama-3.3-70B (HF Inference Providers, Groq-routed) and deriving a two-judge intersection-on-contradicts pool. The cross-judge Contradicts agreement is low (Jaccard 0.12), which is itself the headline — Contradicts judgements remain backend-sensitive even after the conservative-pool tightening. A peer-reviewed paper would want a third independent biomedical-domain backend (e.g., Mixtral-Instruct on the same triples) before declaring closure.
+- **LLM-judge backend dependence**. The canonical §2.17 expanded qrels were produced by `gpt-4o-mini --prompt cot` only; Phase 2.5 (§10.8) added Llama-3.3-70B and Phase 2.6 (§10.9) added Qwen2.5-72B as independent backends. The three-way Krippendorff α (mini↔Llama 0.12, mini↔Qwen 0.20, **Llama↔Qwen 0.60**) identifies `mini-cot` as the Contradicts-class outlier. The conservative posture (two-judge and three-judge intersection-on-contradicts pools, §10.8 / §10.9) is what we report in §11.5.5 as the headline numbers. **Remaining gap:** all three judges are *general-domain* LLMs. A fourth backend from a **biomedical-domain family** (Mixtral-Instruct, MedPaLM-Instruct if accessible, or a fine-tuned Bio-Medical-Llama-3 variant) would let us test whether domain priors change the Contradicts distribution — currently we cannot distinguish "general LLMs underestimate Contradicts" from "Contradicts class is genuinely rare in PubMed".
 - **The expanded pool is local to this submission's retrieval shape**. §2.17 covers BM25 top-30 across both paths but is not deep enough for variants that radically change retrieval (e.g., `phase2_hybrid` with FAISS-based dense retrieval would surface PMIDs outside BM25's top-30). Each such variant should run its own `expand-pool` pass on its own retrieval parquets before comparison.
 - **Single annotator perspective**. Our domain expert reviewed 12 disagreement cases; the diagnosis was good but the sample is small. A peer-reviewed paper would want 50+ cases reviewed by two independent biomedical experts.
 - **LLM-in-decision gap vs the field**. §11.5.2 shows that every published-top Supports system (CLaC `LLM_NLI_BM25`, GEHC-HTIC, dal) places an LLM in the *decision* path, not only in the judge. We deliberately kept the LLM out of the pipeline for cleaner attribution; the cost is a structural cap on our Supports F1 that the §10–§10.9 methodological work does not close. Phase 4 (§13) lifts this restriction.
@@ -1112,6 +1121,7 @@ Honest external positioning: **on Supports we are mid-pack and clearly behind th
 - TREC BioGEN 2025 — current track. Official 2025 overview: Gupta, D., Demner-Fushman, D., Hersh, B., Bedrick, S., Roberts, K. (2026). *"Overview of TREC 2025 Biomedical Generative Retrieval (BioGen) Track"*, [arXiv:2603.21582](https://arxiv.org/abs/2603.21582). Table 5 is the calibration anchor for the 44.34 / 4.67 baseline TEST run.
 - TREC BioGEN 2025 participant notebook papers: [TREC 34 proceedings (NIST)](https://trec.nist.gov/pubs/trec34/index.html) — CLaC, CLaC Lab, dal, GEHC-HTIC, SIB, UAmsterdam, uniud each published a notebook paper (§11.5.2). None published code.
 - GEHC-HTIC team preprint: Sahoo, S. R., N., G., Sasidharan, S., Bharti, D. (2026). *"Negation is Not Semantic: Diagnosing Dense Retrieval Failure Modes for Trade-offs in Contradiction-Aware Biomedical QA"*, [arXiv:2603.17580](https://arxiv.org/abs/2603.17580). Describes GE Healthcare Bangalore's "Decoupled Lexical Architecture" + "Narrative-Aware Reranking" + "One-Shot In-Context Learning" pipeline for Task A.
+- **BioACE (organisers' evaluation framework, used in Table 5 of the 2025 overview):** Gupta, D., Bartels, D., Demner-Fushman, D. (2026). *"BioACE: An Automated Framework for Biomedical Answer and Citation Evaluations"*, [arXiv:2602.04982](https://arxiv.org/abs/2602.04982). Nugget-based LLM-as-judge (Llama-3.3) over `(answer-sentence, cited-document)` pairs producing `Supports/Contradicts/Neutral/Not relevant` labels — the single-backend, no-CI judge whose limitations the §10 — §10.9 hardening of this work directly addresses.
 - Organisers' starter kit (the baseline TEST implementation): [github.com/trec-biogen/starter-kit-2025](https://github.com/trec-biogen/starter-kit-2025). Vendored locally via `scripts/vendor_starter_kit.sh` (§4.5).
 - Adjacent precedent for *published* BioGen code: [Webis at TREC 2024 BioGen](https://github.com/webis-de/trec24-biogen) (2024 only; no 2025 submission).
 - BioASQ — adjacent biomedical QA evaluation, useful for cross-comparison: [bioasq.org](http://bioasq.org/).
@@ -1158,7 +1168,7 @@ Honest external positioning: **on Supports we are mid-pack and clearly behind th
 
 ### 14.6 Internal artefacts produced during the work
 
-- Design: [`openspec/changes/phase2-pool-aware-pipeline/`](../openspec/changes/phase2-pool-aware-pipeline/) — proposal, design, specs, tasks (75 of 84 ticked at time of writing, including the §12.10 LLM query-rewrite stretch).
+- Design: [`openspec/changes/phase2-pool-aware-pipeline/`](../openspec/changes/phase2-pool-aware-pipeline/) — proposal, design, specs, tasks (75 of 84 ticked at time of writing, including the openspec design task `12.10` LLM query-rewrite stretch).
 - Code: [`src/trec_biogen/`](../src/trec_biogen/) — judge module, eval module, pipeline orchestrator, retrieval helpers.
 - Configs: [`configs/`](../configs/) — Hydra group configs (retrieval, rerank, nli, run) including the Phase 2 variant overrides.
 - Reports: [`reports/phase2_summary.md`](../reports/phase2_summary.md), [`reports/llm_judge_validation.md`](../reports/llm_judge_validation.md), [`reports/phase1_gap_analysis.md`](../reports/phase1_gap_analysis.md).
@@ -1222,15 +1232,84 @@ uv run python -m trec_biogen.judge.rejudge expand-pool \
 # 6. Phase 2 variants (each writes its own runs/<id>/).
 uv run python -m trec_biogen.pipeline.run_task_a --config-name run/phase2_allow_existing \
     +reuse_from=runs/<phase1_run>
-uv run python -m trec_biogen.pipeline.run_task_a --config-name run/phase2_no_rerank \
-    # selective reuse: see scripts in §7.1
+uv run python -m trec_biogen.pipeline.run_task_a --config-name run/phase2_no_rerank
+uv run python -m trec_biogen.pipeline.run_task_a --config-name run/phase2_no_negex
+uv run python -m trec_biogen.pipeline.run_task_a --config-name run/phase2_scifive_large
 uv run python -m trec_biogen.pipeline.run_task_a --config-name run/phase2_bm25_rm3
+uv run python -m trec_biogen.pipeline.run_task_a --config-name run/phase2_bm25_rm3_llm_filtered
+uv run python -m trec_biogen.pipeline.run_task_a --config-name run/phase2_bm25_llm_rewrite
 
-# 7. Regenerate summary.
-uv run python -m trec_biogen.eval.phase2_summary
+# 7. Phase 2 §10 methodological hardening
+# 7.1 bootstrap CI + persisted records (records-out unlocks §10.2 calibration)
+uv run python -m trec_biogen.judge.rejudge validate \
+    --backend openai-mini --prompt cot --threshold 0.85 \
+    --records-out reports/_records_mini_cot.jsonl
+
+# 7.2 second-backend gate (Together / HF Providers, $0.376)
+export TOGETHER_API_KEY=...
+uv run python -m trec_biogen.judge.rejudge validate \
+    --backend together --prompt cot --threshold 0.85 \
+    --records-out reports/_records_together_cot.jsonl
+
+# 7.3 calibration (held-out k=5 CV ECE, no API spend)
+uv run python -m trec_biogen.judge.calibration \
+    --records reports/_records_mini_cot.jsonl --k 5 --seed 0
+
+# 8. Phase 2.5 — second judge over the full §2.17 candidate set ($2.47)
+export HF_TOKEN=...
+uv run python -m trec_biogen.judge.rejudge expand-pool \
+    --backend hf-llama-3.3-70b --prompt cot \
+    --retrieval-support    runs/<phase1_run>/retrieval_support.parquet \
+    --retrieval-contradict runs/<phase1_run>/retrieval_contradict.parquet \
+    --top-k 30 --max-concurrent 8 --cost-cap 5 \
+    --out data/qrels/biogen2025_taskA_qrels_expanded_hf-llama.jsonl
+
+uv run python -m trec_biogen.judge.intersection \
+    --records data/qrels/biogen2025_taskA_qrels_expanded.jsonl \
+              data/qrels/biogen2025_taskA_qrels_expanded_hf-llama.jsonl \
+    --out data/qrels/biogen2025_taskA_qrels_intersection.jsonl
+
+# 9. Phase 2.6 — third judge (Qwen2.5-72B via HF Providers, $4.00)
+uv run python -m trec_biogen.judge.rejudge expand-pool \
+    --backend hf-qwen-2.5-72b --prompt cot \
+    --retrieval-support    runs/<phase1_run>/retrieval_support.parquet \
+    --retrieval-contradict runs/<phase1_run>/retrieval_contradict.parquet \
+    --top-k 30 --max-concurrent 8 --cost-cap 6 \
+    --out data/qrels/biogen2025_taskA_qrels_expanded_qwen.jsonl
+
+uv run python -m trec_biogen.judge.intersection \
+    --records data/qrels/biogen2025_taskA_qrels_expanded.jsonl \
+              data/qrels/biogen2025_taskA_qrels_expanded_hf-llama.jsonl \
+              data/qrels/biogen2025_taskA_qrels_expanded_qwen.jsonl \
+    --out data/qrels/biogen2025_taskA_qrels_intersection_3way.jsonl
+
+# 10. Regenerate the final summary with cell-level bootstrap CIs on every pool.
+uv run python -m trec_biogen.eval.phase2_summary \
+    --pools official expanded intersection intersection-3way
 ```
 
-Total cost for the LLM-judge runs reported: **$1.77** across four invocations. Total GPU time consumed: ~6 h Phase 1 baseline + ~84 min `bm25_rm3` + ~12 min `no_rerank` (reuse-from) + <2 min `allow_existing` (reuse-from) ≈ **7.5 h**. Disk: ~40 GB (BM25 index + run artefacts).
+**Resource budget (full project, eight variants except `phase2_hybrid`):**
+
+| Item | Value | Source |
+|---|---:|---|
+| LLM-judge API spend, §2 expansion | $1.77 | §6.3 + §6.4 |
+| LLM-judge API spend, §10 hardening | $0.91 | §10 intro |
+| LLM-judge API spend, Phase 2.5 second-judge rejudge | $2.47 | §10.8 |
+| LLM-judge API spend, Phase 2.6 third-judge rejudge + Qwen gate | $4.00 | §10.9 |
+| **Total LLM-judge spend** | **$9.15** | — |
+| Phase 1 baseline pipeline wall-clock | ~6 h | §4.6 |
+| `bm25_rm3` full | ~84 min | §7.2 |
+| `bm25_rm3_llm_filtered` full | ~84 min | §7.2 |
+| `bm25_llm_rewrite` full | ~88 min | §10.7 |
+| `no_negex` full | ~9.7 h | §7.2 |
+| `scifive_large` full | ~5.3 h | §7.2 |
+| `no_rerank` (selective reuse) | ~12 min | §7.2 |
+| `allow_existing` (reuse-from) | <2 min | §7.2 |
+| **Total GPU time** | **~22 h** | — |
+| Disk footprint (BM25 index + run artefacts) | ~40 GB | — |
+| Hardware floor | WSL2 laptop, 12 GB RAM, Quadro T1000 4 GB VRAM | §1.3 |
+
+Note: `phase2_hybrid` (BM25 + Dense MedCPT + RRF) would add ~24 h CPU encoding for the 5 M-doc FAISS index + ~2 h GPU for retrieval, plus its own §2.17-equivalent expand-pool pass. Not included in the totals above; see §13 future work.
 
 ---
 
